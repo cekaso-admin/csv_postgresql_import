@@ -161,6 +161,7 @@ class DefaultsSchema(BaseModel):
     encoding: str = "utf-8"
     skiprows: int = 0
     rebuild_table: bool = False
+    datestyle: Optional[str] = None
     db_schema: Optional[str] = Field(None, alias="schema")
 
     class Config:

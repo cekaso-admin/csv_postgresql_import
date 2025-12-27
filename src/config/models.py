@@ -98,6 +98,7 @@ class DefaultsConfig(BaseModel):
         encoding: CSV file encoding (default: "utf-8")
         skiprows: Number of rows to skip before header (default: 0)
         rebuild_table: If True, TRUNCATE tables before import (default: False)
+        datestyle: PostgreSQL datestyle for date parsing (e.g., "DMY" for European)
         schema: Database schema name (default: "public")
     """
     model_config = ConfigDict(populate_by_name=True)
@@ -108,6 +109,7 @@ class DefaultsConfig(BaseModel):
     encoding: str = "utf-8"
     skiprows: int = 0
     rebuild_table: bool = False
+    datestyle: Optional[str] = None
     db_schema: str = Field(default="public", alias="schema")
 
     @field_validator("primary_key")
@@ -274,6 +276,7 @@ class ProjectConfig(BaseModel):
                 encoding=self.defaults.encoding,
                 skiprows=self.defaults.skiprows,
                 rebuild_table=self.defaults.rebuild_table,
+                datestyle=self.defaults.datestyle,
                 db_schema=self.defaults.db_schema,
             )
 
