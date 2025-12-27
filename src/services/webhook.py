@@ -33,6 +33,7 @@ class WebhookPayload:
         files_failed: Number of failed files
         total_inserted: Total rows inserted
         total_updated: Total rows updated
+        total_skipped: Total rows skipped (unchanged)
         errors: List of error messages
         duration_seconds: Job duration
     """
@@ -43,6 +44,7 @@ class WebhookPayload:
     files_failed: int = 0
     total_inserted: int = 0
     total_updated: int = 0
+    total_skipped: int = 0
     errors: List[str] = field(default_factory=list)
     duration_seconds: Optional[float] = None
 
@@ -56,6 +58,7 @@ class WebhookPayload:
             "files_failed": self.files_failed,
             "total_inserted": self.total_inserted,
             "total_updated": self.total_updated,
+            "total_skipped": self.total_skipped,
             "errors": self.errors,
             "duration_seconds": self.duration_seconds,
         }

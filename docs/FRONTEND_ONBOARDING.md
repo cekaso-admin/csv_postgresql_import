@@ -184,6 +184,7 @@ Job
 ├── files_failed (count)
 ├── total_inserted (row count)
 ├── total_updated (row count)
+├── total_skipped (row count, unchanged rows)
 ├── callback_url (optional webhook)
 ├── created_at
 ├── file_results[] (details per file)
@@ -197,6 +198,7 @@ JobFile
 ├── table_name (where it was imported)
 ├── inserted (row count)
 ├── updated (row count)
+├── skipped (row count, unchanged rows)
 ├── success (boolean)
 └── error (message if failed)
 ```
@@ -281,7 +283,7 @@ JobFile
 │  Click job → Show details:              │
 │  - Duration                             │
 │  - Files processed                      │
-│  - Rows inserted/updated                │
+│  - Rows inserted/updated/skipped        │
 │  - Errors (if any)                      │
 └─────────────────────────────────────────┘
 ```
@@ -433,10 +435,25 @@ X-API-Key: your-api-key-here
 - Filter by project, status
 - Auto-refresh toggle for running jobs
 - Detail view showing:
-  - Summary stats
+  - Summary stats (inserted/updated/skipped counts)
   - File-by-file breakdown
   - Error messages (expandable)
   - Duration
+
+### Displaying Import Statistics
+
+The API returns three row counts that should be displayed prominently:
+
+| Field | Meaning | Suggested Display |
+|-------|---------|-------------------|
+| `inserted` | New rows added | Green badge/text |
+| `updated` | Existing rows modified | Blue badge/text |
+| `skipped` | Unchanged rows (no update needed) | Gray badge/text |
+
+**Why show skipped?** The `skipped` count indicates rows that already existed with identical data. This helps users understand:
+- How much data actually changed vs. stayed the same
+- Whether re-imports are necessary
+- System efficiency (skipped rows = no unnecessary database writes)
 
 ### Dashboard
 - Recent jobs (last 10)
@@ -480,6 +497,6 @@ Common API errors to handle:
 
 ## Questions?
 
-- API documentation: http://localhost:8000/docs
+- API documentation: https://csvimporter-api.automationboard.de/docs
 - Architecture decisions: See `context/decisions/` folder
 - Implementation details: See `README.md`

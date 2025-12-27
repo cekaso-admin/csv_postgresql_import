@@ -537,7 +537,7 @@ async def get_schedule_history_endpoint(
                     """
                     SELECT id, project_id, project_name, status, started_at,
                            completed_at, files_processed, files_failed,
-                           total_inserted, total_updated, callback_url, schedule_id, created_at
+                           total_inserted, total_updated, total_skipped, callback_url, schedule_id, created_at
                     FROM cpi_jobs
                     WHERE schedule_id = %s
                     ORDER BY created_at DESC
@@ -571,6 +571,7 @@ async def get_schedule_history_endpoint(
                     files_failed=job.files_failed,
                     total_inserted=job.total_inserted,
                     total_updated=job.total_updated,
+                    total_skipped=job.total_skipped,
                     callback_url=job.callback_url,
                     created_at=job.created_at,
                     file_results=[
@@ -579,6 +580,7 @@ async def get_schedule_history_endpoint(
                             table_name=f.table_name,
                             inserted=f.inserted,
                             updated=f.updated,
+                            skipped=f.skipped,
                             success=f.success,
                             error=f.error,
                         )

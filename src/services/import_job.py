@@ -44,6 +44,7 @@ class FileResult:
     table_name: str
     inserted: int = 0
     updated: int = 0
+    skipped: int = 0
     success: bool = False
     error: Optional[str] = None
 
@@ -63,6 +64,7 @@ class JobResult:
         files_failed: Number of files that failed
         total_inserted: Total rows inserted across all files
         total_updated: Total rows updated across all files
+        total_skipped: Total rows skipped (unchanged) across all files
         file_results: Detailed results per file
         errors: List of job-level error messages
     """
@@ -75,6 +77,7 @@ class JobResult:
     files_failed: int = 0
     total_inserted: int = 0
     total_updated: int = 0
+    total_skipped: int = 0
     file_results: List[FileResult] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
 
@@ -103,12 +106,14 @@ class JobResult:
             "files_failed": self.files_failed,
             "total_inserted": self.total_inserted,
             "total_updated": self.total_updated,
+            "total_skipped": self.total_skipped,
             "file_results": [
                 {
                     "filename": fr.filename,
                     "table_name": fr.table_name,
                     "inserted": fr.inserted,
                     "updated": fr.updated,
+                    "skipped": fr.skipped,
                     "success": fr.success,
                     "error": fr.error,
                 }
@@ -316,6 +321,7 @@ class ImportJob:
                 self.result.files_processed += 1
                 self.result.total_inserted += file_result.inserted
                 self.result.total_updated += file_result.updated
+                self.result.total_skipped += file_result.skipped
             else:
                 self.result.files_failed += 1
 
@@ -353,6 +359,7 @@ class ImportJob:
 
             file_result.inserted = import_result.inserted
             file_result.updated = import_result.updated
+            file_result.skipped = import_result.skipped
             file_result.success = import_result.success
 
             if import_result.has_errors:
@@ -360,7 +367,7 @@ class ImportJob:
 
             logger.info(
                 f"Imported {filename}: {import_result.inserted} inserted, "
-                f"{import_result.updated} updated"
+                f"{import_result.updated} updated, {import_result.skipped} skipped"
             )
 
         except Exception as e:
@@ -385,7 +392,8 @@ class ImportJob:
         logger.info(
             f"Job {self.job_id} completed: status={self.result.status.value}, "
             f"processed={self.result.files_processed}, failed={self.result.files_failed}, "
-            f"inserted={self.result.total_inserted}, updated={self.result.total_updated}"
+            f"inserted={self.result.total_inserted}, updated={self.result.total_updated}, "
+            f"skipped={self.result.total_skipped}"
         )
 
         # Send webhook callback
@@ -403,6 +411,7 @@ class ImportJob:
                 files_failed=self.result.files_failed,
                 total_inserted=self.result.total_inserted,
                 total_updated=self.result.total_updated,
+                total_skipped=self.result.total_skipped,
                 errors=self.result.errors,
                 duration_seconds=self.result.duration_seconds,
             )

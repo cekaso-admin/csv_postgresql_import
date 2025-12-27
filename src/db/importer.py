@@ -57,14 +57,16 @@ class ImportResult:
 
     Attributes:
         inserted: Number of rows inserted
-        updated: Number of rows updated (via upsert)
+        updated: Number of rows updated (via upsert, only when data changed)
+        skipped: Number of rows skipped (existing rows with no changes)
         errors: List of error messages encountered
         file_path: Path to the imported file
         table_name: Target table name
-        total_rows: Total rows processed
+        total_rows: Total rows processed (inserted + updated + skipped)
     """
     inserted: int = 0
     updated: int = 0
+    skipped: int = 0
     errors: List[str] = field(default_factory=list)
     file_path: Optional[str] = None
     table_name: Optional[str] = None
@@ -72,7 +74,7 @@ class ImportResult:
     @property
     def total_rows(self) -> int:
         """Total number of rows successfully processed."""
-        return self.inserted + self.updated
+        return self.inserted + self.updated + self.skipped
 
     @property
     def has_errors(self) -> bool:
@@ -183,15 +185,47 @@ def _upsert_from_staging(
     """
     Upsert rows from staging table to target table.
 
+    Only updates rows where at least one non-PK column has changed,
+    using IS DISTINCT FROM for proper NULL handling. Rows with no
+    changes are skipped (not counted in updated).
+
     Returns:
         Tuple of (inserted_count, updated_count)
     """
+    # Identify non-primary key columns for updates
+    non_pk_columns = [col for col in columns if col not in primary_key]
+
+    # Build the SET clause for updates
+    updates = sql.SQL(", ").join([
+        sql.SQL("{} = EXCLUDED.{}").format(
+            sql.Identifier(col),
+            sql.Identifier(col)
+        )
+        for col in non_pk_columns
+    ])
+
+    # Build WHERE clause with IS DISTINCT FROM for conditional updates
+    # Only update if at least one non-PK column has changed
+    if non_pk_columns:
+        where_conditions = sql.SQL(" OR ").join([
+            sql.SQL("{}.{} IS DISTINCT FROM EXCLUDED.{}").format(
+                sql.Identifier(target_table),
+                sql.Identifier(col),
+                sql.Identifier(col)
+            )
+            for col in non_pk_columns
+        ])
+        where_clause = sql.SQL(" WHERE ").format() + where_conditions
+    else:
+        # No non-PK columns: no updates possible, all conflicts become skipped
+        where_clause = sql.SQL("")
+
     upsert_query = sql.SQL("""
         WITH upserted AS (
             INSERT INTO {target_table} ({columns})
             SELECT {columns} FROM {staging_table}
             ON CONFLICT ({pk_columns})
-            DO UPDATE SET {updates}
+            DO UPDATE SET {updates}{where_clause}
             RETURNING xmax
         )
         SELECT
@@ -203,13 +237,8 @@ def _upsert_from_staging(
         staging_table=sql.Identifier(schema, staging_table),
         columns=sql.SQL(", ").join(map(sql.Identifier, columns)),
         pk_columns=sql.SQL(", ").join(map(sql.Identifier, primary_key)),
-        updates=sql.SQL(", ").join([
-            sql.SQL("{} = EXCLUDED.{}").format(
-                sql.Identifier(col),
-                sql.Identifier(col)
-            )
-            for col in columns if col not in primary_key
-        ])
+        updates=updates,
+        where_clause=where_clause
     )
 
     cur.execute(upsert_query)
@@ -373,9 +402,13 @@ def import_csv(
 
                 result.inserted = inserted
                 result.updated = updated
+                # Calculate skipped: rows that existed but had no changes
+                # Use max(0, ...) as a guard against any edge cases
+                result.skipped = max(0, total_rows - inserted - updated)
 
         logger.info(
-            f"Import completed: {result.inserted} inserted, {result.updated} updated"
+            f"Import completed: {result.inserted} inserted, {result.updated} updated, "
+            f"{result.skipped} skipped (unchanged)"
         )
 
     except Exception as e:

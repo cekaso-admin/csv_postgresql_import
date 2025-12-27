@@ -480,6 +480,7 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
     files_failed = 0
     total_inserted = 0
     total_updated = 0
+    total_skipped = 0
     database_url = None
 
     try:
@@ -545,6 +546,7 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
                         table_name=table_config.target_table,
                         inserted=result.inserted,
                         updated=result.updated,
+                        skipped=result.skipped,
                         success=result.success,
                         error="; ".join(result.errors) if result.errors else None,
                     )
@@ -553,6 +555,7 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
                         files_processed += 1
                         total_inserted += result.inserted
                         total_updated += result.updated
+                        total_skipped += result.skipped
                     else:
                         files_failed += 1
 
@@ -633,6 +636,7 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
                             table_name=table_config.target_table,
                             inserted=result.inserted,
                             updated=result.updated,
+                            skipped=result.skipped,
                             success=result.success,
                             error="; ".join(result.errors) if result.errors else None,
                         )
@@ -641,6 +645,7 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
                             files_processed += 1
                             total_inserted += result.inserted
                             total_updated += result.updated
+                            total_skipped += result.skipped
                         else:
                             files_failed += 1
 
@@ -666,6 +671,7 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
             files_failed=files_failed,
             total_inserted=total_inserted,
             total_updated=total_updated,
+            total_skipped=total_skipped,
         )
 
         logger.info(f"Job {job_id} completed: {status}")
@@ -687,6 +693,7 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
                     files_failed=files_failed,
                     total_inserted=total_inserted,
                     total_updated=total_updated,
+                    total_skipped=total_skipped,
                     errors=errors,
                     duration_seconds=duration,
                 )
@@ -703,6 +710,7 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
             files_failed=files_failed,
             total_inserted=total_inserted,
             total_updated=total_updated,
+            total_skipped=total_skipped,
         )
 
 
@@ -784,6 +792,7 @@ async def list_jobs_endpoint(
             files_failed=r.files_failed,
             total_inserted=r.total_inserted,
             total_updated=r.total_updated,
+            total_skipped=r.total_skipped,
             callback_url=r.callback_url,
             schedule_id=r.schedule_id,
             created_at=r.created_at,
@@ -818,6 +827,7 @@ async def get_job_endpoint(job_id: str, include_details: bool = Query(True)):
         files_failed=record.files_failed,
         total_inserted=record.total_inserted,
         total_updated=record.total_updated,
+        total_skipped=record.total_skipped,
         callback_url=record.callback_url,
         schedule_id=record.schedule_id,
         created_at=record.created_at,
@@ -832,6 +842,7 @@ async def get_job_endpoint(job_id: str, include_details: bool = Query(True)):
                 table_name=f.table_name,
                 inserted=f.inserted,
                 updated=f.updated,
+                skipped=f.skipped,
                 success=f.success,
                 error=f.error,
             )

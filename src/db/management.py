@@ -165,6 +165,7 @@ CREATE TABLE IF NOT EXISTS cpi_jobs (
     files_failed INTEGER DEFAULT 0,
     total_inserted INTEGER DEFAULT 0,
     total_updated INTEGER DEFAULT 0,
+    total_skipped INTEGER DEFAULT 0,
     callback_url TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -177,6 +178,7 @@ CREATE TABLE IF NOT EXISTS cpi_job_files (
     table_name VARCHAR(255),
     inserted INTEGER DEFAULT 0,
     updated INTEGER DEFAULT 0,
+    skipped INTEGER DEFAULT 0,
     success BOOLEAN DEFAULT FALSE,
     error TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -780,6 +782,7 @@ class JobRecord:
     files_failed: int
     total_inserted: int
     total_updated: int
+    total_skipped: int
     callback_url: Optional[str]
     schedule_id: Optional[str]
     created_at: datetime
@@ -794,6 +797,7 @@ class JobFileRecord:
     table_name: Optional[str]
     inserted: int
     updated: int
+    skipped: int
     success: bool
     error: Optional[str]
     created_at: datetime
@@ -841,7 +845,7 @@ def create_job(
                 VALUES (%s, %s, %s, %s, %s)
                 RETURNING id, project_id, project_name, status, started_at,
                           completed_at, files_processed, files_failed,
-                          total_inserted, total_updated, callback_url, schedule_id, created_at
+                          total_inserted, total_updated, total_skipped, callback_url, schedule_id, created_at
                 """,
                 (job_id, project_id, project_name, callback_url, schedule_id)
             )
@@ -859,6 +863,7 @@ def update_job_status(
     files_failed: Optional[int] = None,
     total_inserted: Optional[int] = None,
     total_updated: Optional[int] = None,
+    total_skipped: Optional[int] = None,
 ) -> Optional[JobRecord]:
     """Update job status and statistics."""
     updates = ["status = %s"]
@@ -882,6 +887,9 @@ def update_job_status(
     if total_updated is not None:
         updates.append("total_updated = %s")
         values.append(total_updated)
+    if total_skipped is not None:
+        updates.append("total_skipped = %s")
+        values.append(total_skipped)
 
     values.append(job_id)
 
@@ -894,7 +902,7 @@ def update_job_status(
                 WHERE id = %s
                 RETURNING id, project_id, project_name, status, started_at,
                           completed_at, files_processed, files_failed,
-                          total_inserted, total_updated, callback_url, schedule_id, created_at
+                          total_inserted, total_updated, total_skipped, callback_url, schedule_id, created_at
                 """,
                 values
             )
@@ -913,7 +921,7 @@ def get_job(job_id: str) -> Optional[JobRecord]:
                 """
                 SELECT id, project_id, project_name, status, started_at,
                        completed_at, files_processed, files_failed,
-                       total_inserted, total_updated, callback_url, schedule_id, created_at
+                       total_inserted, total_updated, total_skipped, callback_url, schedule_id, created_at
                 FROM cpi_jobs
                 WHERE id = %s
                 """,
@@ -962,7 +970,7 @@ def list_jobs(
                 f"""
                 SELECT id, project_id, project_name, status, started_at,
                        completed_at, files_processed, files_failed,
-                       total_inserted, total_updated, callback_url, schedule_id, created_at
+                       total_inserted, total_updated, total_skipped, callback_url, schedule_id, created_at
                 FROM cpi_jobs
                 {where_clause}
                 ORDER BY created_at DESC
@@ -987,6 +995,7 @@ def _row_to_job_record(row: Dict) -> JobRecord:
         files_failed=row["files_failed"],
         total_inserted=row["total_inserted"],
         total_updated=row["total_updated"],
+        total_skipped=row["total_skipped"],
         callback_url=row["callback_url"],
         schedule_id=str(row["schedule_id"]) if row["schedule_id"] else None,
         created_at=row["created_at"],
@@ -1003,6 +1012,7 @@ def add_job_file(
     table_name: Optional[str] = None,
     inserted: int = 0,
     updated: int = 0,
+    skipped: int = 0,
     success: bool = False,
     error: Optional[str] = None,
 ) -> JobFileRecord:
@@ -1011,11 +1021,11 @@ def add_job_file(
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
-                INSERT INTO cpi_job_files (job_id, filename, table_name, inserted, updated, success, error)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                RETURNING id, job_id, filename, table_name, inserted, updated, success, error, created_at
+                INSERT INTO cpi_job_files (job_id, filename, table_name, inserted, updated, skipped, success, error)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, job_id, filename, table_name, inserted, updated, skipped, success, error, created_at
                 """,
-                (job_id, filename, table_name, inserted, updated, success, error)
+                (job_id, filename, table_name, inserted, updated, skipped, success, error)
             )
             row = cur.fetchone()
             return JobFileRecord(
@@ -1025,6 +1035,7 @@ def add_job_file(
                 table_name=row["table_name"],
                 inserted=row["inserted"],
                 updated=row["updated"],
+                skipped=row["skipped"],
                 success=row["success"],
                 error=row["error"],
                 created_at=row["created_at"],
@@ -1037,7 +1048,7 @@ def get_job_files(job_id: str) -> List[JobFileRecord]:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 """
-                SELECT id, job_id, filename, table_name, inserted, updated, success, error, created_at
+                SELECT id, job_id, filename, table_name, inserted, updated, skipped, success, error, created_at
                 FROM cpi_job_files
                 WHERE job_id = %s
                 ORDER BY created_at
@@ -1053,6 +1064,7 @@ def get_job_files(job_id: str) -> List[JobFileRecord]:
                     table_name=row["table_name"],
                     inserted=row["inserted"],
                     updated=row["updated"],
+                    skipped=row["skipped"],
                     success=row["success"],
                     error=row["error"],
                     created_at=row["created_at"],

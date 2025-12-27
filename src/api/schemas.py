@@ -256,6 +256,7 @@ class JobFileResponse(BaseModel):
     table_name: Optional[str]
     inserted: int
     updated: int
+    skipped: int
     success: bool
     error: Optional[str]
 
@@ -279,6 +280,7 @@ class JobResponse(BaseModel):
     files_failed: int
     total_inserted: int
     total_updated: int
+    total_skipped: int
     callback_url: Optional[str]
     schedule_id: Optional[str] = None
     created_at: datetime
