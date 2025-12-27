@@ -258,6 +258,7 @@ def import_csv(
     delimiter: str = ",",
     encoding: str = "utf-8",
     skiprows: int = 0,
+    datestyle: Optional[str] = None,
     database_url: Optional[str] = None
 ) -> ImportResult:
     """
@@ -284,6 +285,8 @@ def import_csv(
         delimiter: CSV column separator (default: ",")
         encoding: CSV file encoding (default: "utf-8", use "latin-1" for Windows)
         skiprows: Number of rows to skip before header (default: 0)
+        datestyle: PostgreSQL datestyle for parsing dates (default: None = use DB default).
+                  Use "DMY" for European dates (DD.MM.YYYY), "MDY" for US dates (MM/DD/YYYY).
         database_url: Optional database URL. If provided, uses direct connection
                      instead of the connection pool. Useful for importing to
                      different target databases.
@@ -371,6 +374,11 @@ def import_csv(
 
         with _get_conn_manager(database_url) as conn:
             with conn.cursor() as cur:
+                # Set datestyle if specified (e.g., "DMY" for European, "MDY" for US)
+                if datestyle:
+                    cur.execute(f"SET datestyle = 'ISO, {datestyle}'")
+                    logger.debug(f"Set datestyle to 'ISO, {datestyle}'")
+
                 # Stream CSV in chunks to staging table
                 total_rows = 0
                 chunk_num = 0

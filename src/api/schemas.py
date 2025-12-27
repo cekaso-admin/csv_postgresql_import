@@ -177,6 +177,7 @@ class TableConfigSchema(BaseModel):
     delimiter: str = ","
     encoding: str = "utf-8"
     skiprows: int = 0
+    datestyle: Optional[str] = None
     db_schema: Optional[str] = Field(None, alias="schema")
 
     class Config:

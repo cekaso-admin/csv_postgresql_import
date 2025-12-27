@@ -537,6 +537,7 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
                         delimiter=table_config.delimiter,
                         encoding=table_config.encoding,
                         skiprows=table_config.skiprows,
+                        datestyle=table_config.datestyle,
                         database_url=database_url,
                     )
 
@@ -627,6 +628,7 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
                             delimiter=table_config.delimiter,
                             encoding=table_config.encoding,
                             skiprows=table_config.skiprows,
+                            datestyle=table_config.datestyle,
                             database_url=database_url,
                         )
 

@@ -124,6 +124,7 @@ tables:
   - file_pattern: "customers_*.csv"
     target_table: "customers"
     primary_key: ["customer_id", "region"]
+    datestyle: "DMY"           # For European dates (DD.MM.YYYY)
     column_mapping:
       "Kunde Nr.": "customer_id"
       "Name": "customer_name"
@@ -425,10 +426,11 @@ X-API-Key: your-api-key-here
   - Delimiter (text, default ",")
   - Encoding (dropdown: utf-8, latin-1, etc.)
   - Skip rows (number, default 0)
+  - Datestyle (dropdown: none, DMY, MDY - for date parsing)
   - Table naming rules
 - Explicit mode:
   - Table list with add/remove
-  - Each table: pattern, target, primary key, column mapping
+  - Each table: pattern, target, primary key, datestyle, column mapping
 
 ### Job Monitor
 - List view with status badges (color-coded)

@@ -355,6 +355,7 @@ class ImportJob:
                 delimiter=table_config.delimiter,
                 encoding=table_config.encoding,
                 skiprows=table_config.skiprows,
+                datestyle=table_config.datestyle,
             )
 
             file_result.inserted = import_result.inserted

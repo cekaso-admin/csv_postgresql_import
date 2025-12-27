@@ -139,6 +139,7 @@ class TableConfig(BaseModel):
         delimiter: CSV column separator (default: ",")
         encoding: CSV file encoding (default: "utf-8")
         skiprows: Number of rows to skip before header (default: 0)
+        datestyle: PostgreSQL datestyle for date parsing (e.g., "DMY" for European)
         db_schema: Database schema name (default: "public")
     """
     model_config = ConfigDict(populate_by_name=True)
@@ -151,6 +152,7 @@ class TableConfig(BaseModel):
     delimiter: str = ","
     encoding: str = "utf-8"
     skiprows: int = 0
+    datestyle: Optional[str] = None
     db_schema: str = Field(default="public", alias="schema")
 
     @field_validator("primary_key")
