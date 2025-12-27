@@ -28,6 +28,7 @@ from src.db.schema import (
     table_exists,
     get_table_columns,
     create_table_from_columns,
+    add_columns_to_table,
     create_staging_table,
     drop_staging_table,
     truncate_table,
@@ -344,6 +345,11 @@ def import_csv(
         if not table_exists(table_name, schema, database_url):
             logger.info(f"Table {table_name} does not exist, creating...")
             create_table_from_columns(table_name, final_columns, pk_list, schema, database_url=database_url)
+        else:
+            # Table exists - check for missing columns and add them
+            added_columns = add_columns_to_table(table_name, final_columns, schema, database_url)
+            if added_columns:
+                logger.info(f"Added {len(added_columns)} new columns to existing table: {added_columns}")
 
         # Validate primary key columns exist
         table_columns = get_table_columns(table_name, schema, database_url)

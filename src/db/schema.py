@@ -230,6 +230,71 @@ def create_table_from_columns(
         ) from e
 
 
+def add_columns_to_table(
+    table_name: str,
+    columns: List[str],
+    schema: str = "public",
+    database_url: Optional[str] = None
+) -> List[str]:
+    """
+    Add missing columns to an existing table.
+
+    Only adds columns that don't already exist. All new columns are created
+    as VARCHAR type (per ADR-002).
+
+    Args:
+        table_name: Name of the table to modify
+        columns: List of column names that should exist
+        schema: Database schema name (default: "public")
+        database_url: Optional database URL (uses pool if not provided)
+
+    Returns:
+        List of column names that were actually added
+
+    Raises:
+        TableNotFoundError: If the table does not exist
+        SchemaOperationError: If adding columns fails
+    """
+    if not table_exists(table_name, schema, database_url):
+        raise TableNotFoundError(f"Table '{table_name}' does not exist")
+
+    existing_columns = get_table_columns(table_name, schema, database_url)
+    missing_columns = [col for col in columns if col not in existing_columns]
+
+    if not missing_columns:
+        logger.debug(f"No missing columns to add to {table_name}")
+        return []
+
+    try:
+        with _get_conn_manager(database_url) as conn:
+            with conn.cursor() as cur:
+                for col in missing_columns:
+                    query = sql.SQL("ALTER TABLE {table} ADD COLUMN {column} VARCHAR").format(
+                        table=sql.Identifier(schema, table_name),
+                        column=sql.Identifier(col)
+                    )
+                    cur.execute(query)
+
+                conn.commit()
+
+                logger.info(
+                    f"Added {len(missing_columns)} columns to table {table_name}: {missing_columns}",
+                    extra={
+                        "table": table_name,
+                        "schema": schema,
+                        "added_columns": missing_columns
+                    }
+                )
+
+                return missing_columns
+
+    except psycopg2.Error as e:
+        logger.error(f"Failed to add columns to table: {e}", exc_info=True)
+        raise SchemaOperationError(
+            f"Could not add columns to table '{table_name}': {e}"
+        ) from e
+
+
 def create_staging_table(
     target_table: str,
     schema: str = "public",
