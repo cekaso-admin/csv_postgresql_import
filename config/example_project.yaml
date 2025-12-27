@@ -1,0 +1,85 @@
+# Example Project Configuration
+# Copy this file and rename to your project name (e.g., customer_abc.yaml)
+#
+# This configuration supports TWO MODES:
+# 1. Auto-discovery mode: Use `defaults` + `table_naming` for many similar files
+# 2. Explicit mode: Use `tables` list for specific file-to-table mappings
+#
+# Both modes can be combined - explicit `tables` entries override defaults.
+
+project: example_project
+
+# Database connection
+# The env_var points to an environment variable containing the connection string
+connection:
+  env_var: DATABASE_URL
+
+# =============================================================================
+# AUTO-DISCOVERY MODE (recommended for projects with many similar files)
+# =============================================================================
+# Use this when you have many CSV files with the same structure/settings.
+# Table names are automatically derived from filenames.
+
+defaults:
+  file_pattern: "*.csv"      # Which files to process (glob pattern)
+  primary_key: HDR_ID        # Default primary key for all files
+  delimiter: "|"             # CSV delimiter
+  encoding: "latin-1"        # File encoding
+  skiprows: 1                # Rows to skip before header
+  # rebuild_table: false     # Optional: TRUNCATE before import
+  # schema: public           # Optional: database schema
+
+# Transform filename → table name
+table_naming:
+  strip_prefix: "IxExp"      # Remove prefix: IxExpKonto.csv → Konto.csv
+  strip_suffix: ""           # Remove suffix: Konto_Daily.csv → Konto.csv
+  lowercase: true            # Lowercase: Konto → konto
+
+# Result: IxExpKonto.csv → table "konto" with primary key "HDR_ID"
+
+# =============================================================================
+# SFTP CONFIGURATION (optional)
+# =============================================================================
+# Remove this section if files are local or uploaded via API
+
+sftp:
+  host: sftp.example.com
+  port: 22
+  username: export_user
+  # Use password OR key_path, not both
+  # password: "your-password"
+  key_path: ~/.ssh/sftp_key
+  remote_path: /exports/daily/
+
+# =============================================================================
+# EXPLICIT TABLE MAPPINGS (optional - overrides defaults)
+# =============================================================================
+# Use this for files that need different settings than the defaults.
+# These take precedence over auto-discovery.
+
+tables:
+  # Override: this file has a different primary key
+  - file_pattern: "special_orders*.csv"
+    target_table: orders
+    primary_key:
+      - order_id
+      - line_number
+    delimiter: ","
+    encoding: "utf-8"
+    skiprows: 0
+
+  # Override: this file needs column renaming
+  - file_pattern: "legacy_customers*.csv"
+    target_table: customers
+    primary_key: customer_id
+    column_mapping:
+      "Kunde Nr.": customer_id
+      "Kunde Name": name
+    delimiter: ";"
+    encoding: "cp1252"
+
+  # Override: this table should be rebuilt each time
+  - file_pattern: "temp_staging*.csv"
+    target_table: temp_staging
+    primary_key: id
+    rebuild_table: true
