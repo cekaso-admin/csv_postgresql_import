@@ -210,6 +210,7 @@ class ProjectConfig(BaseModel):
         defaults: Default settings for auto-discovery mode
         table_naming: Rules for transforming filenames to table names
         tables: List of explicit table configurations (override defaults)
+        refresh_materialized_views: If True, refresh all materialized views after import
 
     Example YAML (auto-discovery mode):
         ```yaml
@@ -228,6 +229,7 @@ class ProjectConfig(BaseModel):
         sftp:
           host: sftp.customer.com
           remote_path: /exports/daily/
+        refresh_materialized_views: true
         ```
 
     Example YAML (explicit mode):
@@ -237,6 +239,7 @@ class ProjectConfig(BaseModel):
           - file_pattern: "customers*.csv"
             target_table: customers
             primary_key: customer_id
+        refresh_materialized_views: true
         ```
     """
     project: str
@@ -245,6 +248,7 @@ class ProjectConfig(BaseModel):
     defaults: Optional[DefaultsConfig] = None
     table_naming: TableNamingConfig = Field(default_factory=TableNamingConfig)
     tables: List[TableConfig] = Field(default_factory=list)
+    refresh_materialized_views: bool = False
 
     def get_table_for_file(self, filename: str) -> Optional[TableConfig]:
         """

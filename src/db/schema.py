@@ -7,6 +7,7 @@ with VARCHAR columns, managing staging tables, and retrieving table metadata.
 
 import logging
 import uuid
+from dataclasses import dataclass
 from typing import List, Optional
 
 import psycopg2
@@ -438,3 +439,139 @@ def truncate_table(
         raise SchemaOperationError(
             f"Could not truncate table '{table_name}': {e}"
         ) from e
+
+
+@dataclass
+class RefreshResult:
+    """Result of refreshing materialized views."""
+    views_refreshed: List[str]
+    views_failed: List[str]
+    errors: List[str]
+
+    @property
+    def success(self) -> bool:
+        """Check if all views were refreshed successfully."""
+        return len(self.views_failed) == 0 and len(self.views_refreshed) > 0
+
+    @property
+    def total_views(self) -> int:
+        """Total number of views attempted."""
+        return len(self.views_refreshed) + len(self.views_failed)
+
+
+def get_materialized_views(
+    schema: str = "public",
+    database_url: Optional[str] = None
+) -> List[str]:
+    """
+    Get all materialized views in the specified schema, ordered by dependencies.
+
+    Views that depend on other views will be listed after their dependencies,
+    ensuring correct refresh order.
+
+    Args:
+        schema: Database schema name (default: "public")
+        database_url: Database URL (required)
+
+    Returns:
+        List of materialized view names in dependency order
+    """
+    try:
+        with _get_conn_manager(database_url) as conn:
+            with conn.cursor() as cur:
+                # Get materialized views with dependency depth
+                # This query calculates how many other mat views each view depends on
+                query = """
+                    WITH view_dependencies AS (
+                        SELECT
+                            m.matviewname as viewname,
+                            COUNT(DISTINCT dep.relname) as dep_count
+                        FROM pg_matviews m
+                        LEFT JOIN pg_depend d ON d.objid = (
+                            SELECT c.oid FROM pg_class c
+                            JOIN pg_namespace n ON n.oid = c.relnamespace
+                            WHERE c.relname = m.matviewname
+                            AND n.nspname = m.schemaname
+                        )
+                        LEFT JOIN pg_rewrite r ON r.oid = d.objid
+                        LEFT JOIN pg_class dep ON dep.oid = d.refobjid AND dep.relkind = 'm'
+                        WHERE m.schemaname = %s
+                        GROUP BY m.matviewname
+                    )
+                    SELECT viewname
+                    FROM view_dependencies
+                    ORDER BY dep_count, viewname
+                """
+
+                cur.execute(query, (schema,))
+                views = [row[0] for row in cur.fetchall()]
+
+                logger.debug(f"Found {len(views)} materialized views in schema '{schema}'")
+                return views
+
+    except psycopg2.Error as e:
+        logger.error(f"Failed to get materialized views: {e}", exc_info=True)
+        raise SchemaOperationError(f"Could not get materialized views: {e}") from e
+
+
+def refresh_materialized_views(
+    schema: str = "public",
+    database_url: Optional[str] = None
+) -> RefreshResult:
+    """
+    Refresh all materialized views in the specified schema.
+
+    Views are refreshed in dependency order (base views first, then dependent views).
+    Each view is refreshed individually so that failures don't prevent other views
+    from being refreshed.
+
+    Args:
+        schema: Database schema name (default: "public")
+        database_url: Database URL (required)
+
+    Returns:
+        RefreshResult with lists of successful and failed views
+    """
+    result = RefreshResult(views_refreshed=[], views_failed=[], errors=[])
+
+    try:
+        views = get_materialized_views(schema, database_url)
+
+        if not views:
+            logger.info(f"No materialized views found in schema '{schema}'")
+            return result
+
+        logger.info(f"Refreshing {len(views)} materialized views in schema '{schema}'")
+
+        with _get_conn_manager(database_url) as conn:
+            for view_name in views:
+                try:
+                    with conn.cursor() as cur:
+                        # Use standard REFRESH (not CONCURRENTLY) for reliability
+                        query = sql.SQL("REFRESH MATERIALIZED VIEW {view}").format(
+                            view=sql.Identifier(schema, view_name)
+                        )
+                        cur.execute(query)
+                        conn.commit()
+
+                        result.views_refreshed.append(view_name)
+                        logger.info(f"Refreshed materialized view: {view_name}")
+
+                except psycopg2.Error as e:
+                    conn.rollback()
+                    error_msg = f"Failed to refresh view '{view_name}': {e}"
+                    result.views_failed.append(view_name)
+                    result.errors.append(error_msg)
+                    logger.error(error_msg)
+
+        logger.info(
+            f"Materialized view refresh complete: {len(result.views_refreshed)} succeeded, "
+            f"{len(result.views_failed)} failed"
+        )
+
+    except Exception as e:
+        error_msg = f"Failed to refresh materialized views: {e}"
+        result.errors.append(error_msg)
+        logger.error(error_msg, exc_info=True)
+
+    return result

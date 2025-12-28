@@ -192,6 +192,7 @@ class ProjectConfigSchema(BaseModel):
     defaults: Optional[DefaultsSchema] = None
     table_naming: Optional[TableNamingSchema] = None
     tables: Optional[List[TableConfigSchema]] = None
+    refresh_materialized_views: bool = False
 
 
 class ProjectCreate(BaseModel):

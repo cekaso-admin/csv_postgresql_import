@@ -115,6 +115,30 @@ table_naming:
 
 Example: `Export_Customers_data.csv` → table `customers`
 
+#### Post-Import Actions
+
+Projects can be configured to perform actions after all CSV files are imported:
+
+**Refresh Materialized Views** (`refresh_materialized_views: true`)
+
+When enabled, the system automatically:
+1. Discovers all materialized views in the target database schema
+2. Refreshes them in dependency order (base views first, then dependent views)
+3. Logs success/failure for each view
+4. Reports any refresh errors in the job results
+
+This is useful when materialized views depend on imported data and need to be updated after each import.
+
+```json
+{
+  "config": {
+    "name": "my_project",
+    "defaults": { ... },
+    "refresh_materialized_views": true
+  }
+}
+```
+
 #### Explicit Mode (for specific file-to-table mappings)
 
 When you need precise control:
@@ -138,6 +162,7 @@ Project
 ├── connection_id (FK to Connection, can be null)
 ├── source_id (FK to Source, can be null)
 ├── config (JSON object with all import settings)
+│   └── refresh_materialized_views (boolean, default: false)
 ├── created_at
 └── updated_at
 ```
@@ -203,6 +228,20 @@ JobFile
 ├── success (boolean)
 └── error (message if failed)
 ```
+
+**Job Error Types:**
+
+Errors in `job.errors[]` have an `error_type` field:
+
+| Error Type | Meaning |
+|------------|---------|
+| `FileNotFound` | Local file path doesn't exist |
+| `SFTPError` | Failed to download from SFTP |
+| `ImportError` | Failed to import a specific file |
+| `JobError` | Critical job-level failure |
+| `MaterializedViewRefreshError` | Failed to refresh a materialized view (post-import) |
+
+Note: Materialized view refresh errors do NOT change the job status. If all files imported successfully but a view refresh fails, the job status will still be `completed` (with errors logged).
 
 ---
 
@@ -339,6 +378,33 @@ X-API-Key: your-api-key-here
 | Update | PUT | `/projects/{name}` | |
 | Delete | DELETE | `/projects/{name}` | |
 
+**Project Config Fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | string | required | Project name |
+| `defaults` | object | null | Auto-discovery settings |
+| `table_naming` | object | null | Filename to table name transformation |
+| `tables` | array | null | Explicit file-to-table mappings |
+| `refresh_materialized_views` | boolean | `false` | Refresh all materialized views after import |
+
+**Example: Enable materialized view refresh on existing project:**
+
+```http
+PUT /projects/my_project
+
+{
+  "config": {
+    "name": "my_project",
+    "defaults": {
+      "file_pattern": "*.csv",
+      "primary_key": "HDR_ID"
+    },
+    "refresh_materialized_views": true
+  }
+}
+```
+
 ### Jobs
 
 | Action | Method | Endpoint | Notes |
@@ -378,6 +444,7 @@ X-API-Key: your-api-key-here
 3. A project can optionally have a source_id for SFTP imports
 4. Project config is flexible JSON - validate on frontend for better UX
 5. SFTP config resolution: request override > source_id > inline config
+6. `refresh_materialized_views` only runs if at least one file was successfully imported
 
 ### Jobs
 

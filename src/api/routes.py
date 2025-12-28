@@ -656,6 +656,17 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
                         add_job_error(job_id, str(e), "ImportError")
                         files_failed += 1
 
+        # Refresh materialized views if configured
+        if config.refresh_materialized_views and database_url and files_processed > 0:
+            from src.db.schema import refresh_materialized_views
+            logger.info(f"Refreshing materialized views for job {job_id}")
+            refresh_result = refresh_materialized_views(database_url=database_url)
+            if refresh_result.views_refreshed:
+                logger.info(f"Refreshed {len(refresh_result.views_refreshed)} materialized views")
+            if refresh_result.errors:
+                for error in refresh_result.errors:
+                    add_job_error(job_id, error, "MaterializedViewRefreshError")
+
         # Determine final status
         if files_failed == 0 and files_processed > 0:
             status = "completed"
