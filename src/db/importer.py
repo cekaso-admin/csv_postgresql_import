@@ -84,8 +84,8 @@ class ImportResult:
 
     @property
     def success(self) -> bool:
-        """Check if import was successful (no errors and rows processed)."""
-        return not self.has_errors and self.total_rows > 0
+        """Check if import completed without errors."""
+        return not self.has_errors
 
 
 class ImportError(Exception):
