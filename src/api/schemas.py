@@ -243,6 +243,11 @@ class ImportRequest(BaseModel):
     local_files: Optional[List[str]] = Field(
         None, description="List of local file paths (skips SFTP if provided)"
     )
+    local_files_base_path: Optional[str] = Field(
+        None,
+        description="Base path for computing relative paths of local files. "
+        "When set, file patterns can include subdirectory paths (e.g., 'reports/*.csv')"
+    )
 
 
 class ImportResponse(BaseModel):

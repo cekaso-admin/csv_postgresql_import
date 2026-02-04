@@ -238,8 +238,11 @@ class ImportJob:
                     self._finalize()
                     return self.result
 
-                # Process downloaded files
-                self._process_files(download_result.local_paths)
+                # Process downloaded files (use temp_dir as base for path patterns)
+                self._process_files(
+                    download_result.local_paths,
+                    base_path=download_result.temp_dir
+                )
 
         except Exception as e:
             error_msg = f"Job failed: {e}"
@@ -250,12 +253,19 @@ class ImportJob:
         self._finalize()
         return self.result
 
-    def run_local(self, files: List[str]) -> JobResult:
+    def run_local(
+        self,
+        files: List[str],
+        base_path: Optional[str] = None
+    ) -> JobResult:
         """
         Run import with local files (no SFTP).
 
         Args:
             files: List of local file paths to import
+            base_path: Optional base path for computing relative paths.
+                When provided, file patterns can include subdirectory paths
+                (e.g., "reports/*.csv" matches files in a reports/ subdirectory).
 
         Returns:
             JobResult with statistics and status
@@ -278,7 +288,7 @@ class ImportJob:
                     self.result.errors.append(f"File not found: {file_path}")
 
             if valid_files:
-                self._process_files(valid_files)
+                self._process_files(valid_files, base_path=base_path)
 
         except Exception as e:
             error_msg = f"Job failed: {e}"
@@ -289,23 +299,40 @@ class ImportJob:
         self._finalize()
         return self.result
 
-    def _process_files(self, file_paths: List[str]) -> None:
+    def _process_files(
+        self,
+        file_paths: List[str],
+        base_path: Optional[str] = None
+    ) -> None:
         """
         Process a list of local files.
 
         Args:
             file_paths: List of local file paths to import
+            base_path: Optional base path for computing relative paths.
+                If provided, patterns can match against subdirectory structure.
+                If None, only filenames are used for matching (backward compatible).
         """
         for file_path in file_paths:
-            filename = os.path.basename(file_path)
+            # Compute relative path for pattern matching
+            if base_path:
+                try:
+                    relative_path = os.path.relpath(file_path, base_path)
+                    # Normalize to forward slashes for pattern matching
+                    relative_path = relative_path.replace("\\", "/")
+                except ValueError:
+                    # relpath fails on Windows if paths are on different drives
+                    relative_path = os.path.basename(file_path)
+            else:
+                relative_path = os.path.basename(file_path)
 
-            # Get table config for this file
-            table_config = self.config.get_table_for_file(filename)
+            # Get table config using relative path (supports path patterns)
+            table_config = self.config.get_table_for_file(relative_path)
 
             if not table_config:
-                logger.warning(f"No table config for file: {filename}, skipping")
+                logger.warning(f"No table config for file: {relative_path}, skipping")
                 self.result.file_results.append(FileResult(
-                    filename=filename,
+                    filename=relative_path,
                     table_name="",
                     success=False,
                     error="No matching table configuration"
@@ -433,6 +460,7 @@ def run_import(
     sftp_override: Optional[SFTPConfig] = None,
     callback_url: Optional[str] = None,
     local_files: Optional[List[str]] = None,
+    local_files_base_path: Optional[str] = None,
 ) -> JobResult:
     """
     Convenience function to run an import job.
@@ -442,6 +470,8 @@ def run_import(
         sftp_override: Optional SFTP config override
         callback_url: Optional webhook URL
         local_files: Optional list of local files (skips SFTP if provided)
+        local_files_base_path: Optional base path for local files, enabling
+            path-based pattern matching (e.g., "reports/*.csv")
 
     Returns:
         JobResult with statistics
@@ -453,6 +483,6 @@ def run_import(
     )
 
     if local_files:
-        return job.run_local(local_files)
+        return job.run_local(local_files, base_path=local_files_base_path)
     else:
         return job.run()

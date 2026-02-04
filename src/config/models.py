@@ -18,6 +18,71 @@ from typing import Dict, List, Optional, Union
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+def is_path_pattern(pattern: str) -> bool:
+    """
+    Check if a pattern includes directory components.
+
+    Args:
+        pattern: Glob pattern to check
+
+    Returns:
+        True if pattern contains forward slash (path separator)
+    """
+    return "/" in pattern
+
+
+def normalize_path_for_matching(path: str) -> str:
+    """
+    Normalize path separators to forward slash for cross-platform matching.
+
+    Args:
+        path: File path or filename
+
+    Returns:
+        Path with backslashes converted to forward slashes
+    """
+    return path.replace("\\", "/")
+
+
+def matches_pattern(pattern: str, path_or_filename: str) -> bool:
+    """
+    Match a pattern against a path or filename.
+
+    If pattern contains '/', match against the full relative path.
+    Otherwise, match against just the filename (basename) for backward compatibility.
+
+    Args:
+        pattern: Glob pattern (e.g., "*.csv" or "reports/*.csv")
+        path_or_filename: Either a filename or a relative path
+
+    Returns:
+        True if the pattern matches
+    """
+    normalized = normalize_path_for_matching(path_or_filename)
+
+    if is_path_pattern(pattern):
+        # Pattern includes path components - match against full path
+        return fnmatch.fnmatch(normalized, pattern)
+    else:
+        # Pattern is filename-only - extract basename and match (backward compatible)
+        filename = normalized.rsplit("/", 1)[-1] if "/" in normalized else normalized
+        return fnmatch.fnmatch(filename, pattern)
+
+
+def extract_filename(path_or_filename: str) -> str:
+    """
+    Extract the filename (basename) from a path.
+
+    Args:
+        path_or_filename: File path or filename
+
+    Returns:
+        Just the filename without directory components
+    """
+    normalized = normalize_path_for_matching(path_or_filename)
+    return normalized.rsplit("/", 1)[-1] if "/" in normalized else normalized
+
+
 class SFTPConfig(BaseModel):
     """
     SFTP connection configuration.
@@ -56,16 +121,21 @@ class TableNamingConfig(BaseModel):
     strip_suffix: str = ""
     lowercase: bool = True
 
-    def transform(self, filename: str) -> str:
+    def transform(self, path_or_filename: str) -> str:
         """
-        Transform a filename into a table name.
+        Transform a path or filename into a table name.
+
+        For paths, extracts the filename first before transformation.
 
         Args:
-            filename: Original filename (e.g., "IxExpKonto.csv")
+            path_or_filename: Original path or filename (e.g., "reports/IxExpKonto.csv")
 
         Returns:
             Transformed table name (e.g., "konto")
         """
+        # Extract filename from path if needed
+        filename = extract_filename(path_or_filename)
+
         # Remove extension
         name = Path(filename).stem
 
@@ -92,7 +162,8 @@ class DefaultsConfig(BaseModel):
     primary key, delimiter, encoding, etc.
 
     Attributes:
-        file_pattern: Glob pattern for files to process (e.g., "*.csv", "IxExp*.csv")
+        file_pattern: Glob pattern for files to process. Can be filename-only
+            (e.g., "*.csv", "IxExp*.csv") or include paths (e.g., "reports/*.csv")
         primary_key: Default primary key column(s) for upsert
         delimiter: CSV column separator (default: ",")
         encoding: CSV file encoding (default: "utf-8")
@@ -120,9 +191,20 @@ class DefaultsConfig(BaseModel):
             return [v]
         return v
 
-    def matches_file(self, filename: str) -> bool:
-        """Check if a filename matches this default's file_pattern."""
-        return fnmatch.fnmatch(filename, self.file_pattern)
+    def matches_file(self, path_or_filename: str) -> bool:
+        """
+        Check if a path or filename matches this default's file_pattern.
+
+        For path patterns (containing '/'), matches against the full relative path.
+        For filename patterns, matches against just the basename.
+
+        Args:
+            path_or_filename: File path or filename to check
+
+        Returns:
+            True if it matches the pattern
+        """
+        return matches_pattern(self.file_pattern, path_or_filename)
 
 
 class TableConfig(BaseModel):
@@ -133,7 +215,8 @@ class TableConfig(BaseModel):
     defaults for specific files.
 
     Attributes:
-        file_pattern: Glob pattern to match CSV files (e.g., "customers*.csv")
+        file_pattern: Glob pattern to match CSV files. Can be filename-only
+            (e.g., "customers*.csv") or include paths (e.g., "archive/2024/*.csv")
         target_table: PostgreSQL table name to import into
         primary_key: Column(s) for upsert conflict resolution
         column_mapping: Optional mapping of CSV column names to table columns
@@ -165,17 +248,20 @@ class TableConfig(BaseModel):
             return [v]
         return v
 
-    def matches_file(self, filename: str) -> bool:
+    def matches_file(self, path_or_filename: str) -> bool:
         """
-        Check if a filename matches this table's file_pattern.
+        Check if a path or filename matches this table's file_pattern.
+
+        For path patterns (containing '/'), matches against the full relative path.
+        For filename patterns, matches against just the basename.
 
         Args:
-            filename: Name of file to check (not full path)
+            path_or_filename: File path or filename to check
 
         Returns:
-            True if filename matches the pattern
+            True if it matches the pattern
         """
-        return fnmatch.fnmatch(filename, self.file_pattern)
+        return matches_pattern(self.file_pattern, path_or_filename)
 
 
 class ConnectionConfig(BaseModel):
@@ -250,30 +336,30 @@ class ProjectConfig(BaseModel):
     tables: List[TableConfig] = Field(default_factory=list)
     refresh_materialized_views: bool = False
 
-    def get_table_for_file(self, filename: str) -> Optional[TableConfig]:
+    def get_table_for_file(self, path_or_filename: str) -> Optional[TableConfig]:
         """
-        Find or generate the table configuration for a given filename.
+        Find or generate the table configuration for a given path or filename.
 
         Resolution order:
         1. Check explicit `tables` list for matching pattern
         2. If `defaults` is set and file matches, generate config from defaults
 
         Args:
-            filename: Name of file to match (not full path)
+            path_or_filename: Filename or relative path to match
 
         Returns:
             TableConfig if a match is found or generated, None otherwise
         """
         # First, check explicit table configs
         for table_config in self.tables:
-            if table_config.matches_file(filename):
+            if table_config.matches_file(path_or_filename):
                 return table_config
 
         # If defaults are set and file matches, generate config
-        if self.defaults and self.defaults.matches_file(filename):
-            table_name = self.table_naming.transform(filename)
+        if self.defaults and self.defaults.matches_file(path_or_filename):
+            table_name = self.table_naming.transform(path_or_filename)
             return TableConfig(
-                file_pattern=filename,
+                file_pattern=extract_filename(path_or_filename),
                 target_table=table_name,
                 primary_key=self.defaults.primary_key,
                 delimiter=self.defaults.delimiter,
@@ -286,27 +372,27 @@ class ProjectConfig(BaseModel):
 
         return None
 
-    def get_all_matching_tables(self, filename: str) -> List[TableConfig]:
+    def get_all_matching_tables(self, path_or_filename: str) -> List[TableConfig]:
         """
-        Find all table configurations that match a given filename.
+        Find all table configurations that match a given path or filename.
 
         Useful for debugging when patterns might overlap.
 
         Args:
-            filename: Name of file to match
+            path_or_filename: Filename or relative path to match
 
         Returns:
             List of all matching TableConfig objects
         """
-        matches = [tc for tc in self.tables if tc.matches_file(filename)]
+        matches = [tc for tc in self.tables if tc.matches_file(path_or_filename)]
 
         # Also include defaults-generated config if applicable
-        if self.defaults and self.defaults.matches_file(filename):
+        if self.defaults and self.defaults.matches_file(path_or_filename):
             # Only add if no explicit match exists
             if not matches:
-                table_name = self.table_naming.transform(filename)
+                table_name = self.table_naming.transform(path_or_filename)
                 matches.append(TableConfig(
-                    file_pattern=filename,
+                    file_pattern=extract_filename(path_or_filename),
                     target_table=table_name,
                     primary_key=self.defaults.primary_key,
                     delimiter=self.defaults.delimiter,
@@ -318,7 +404,7 @@ class ProjectConfig(BaseModel):
 
         return matches
 
-    def should_process_file(self, filename: str) -> bool:
+    def should_process_file(self, path_or_filename: str) -> bool:
         """
         Check if a file should be processed by this project.
 
@@ -327,18 +413,18 @@ class ProjectConfig(BaseModel):
         - The defaults file_pattern
 
         Args:
-            filename: Name of file to check
+            path_or_filename: Filename or relative path to check
 
         Returns:
             True if file should be processed
         """
         # Check explicit tables
         for table_config in self.tables:
-            if table_config.matches_file(filename):
+            if table_config.matches_file(path_or_filename):
                 return True
 
         # Check defaults
-        if self.defaults and self.defaults.matches_file(filename):
+        if self.defaults and self.defaults.matches_file(path_or_filename):
             return True
 
         return False

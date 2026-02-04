@@ -511,6 +511,8 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
         if local_files:
             # Process local files directly
             import os
+            base_path = request.local_files_base_path
+
             for file_path in local_files:
                 if not os.path.exists(file_path):
                     add_job_file(job_id, os.path.basename(file_path), error="File not found")
@@ -518,11 +520,22 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
                     files_failed += 1
                     continue
 
-                filename = os.path.basename(file_path)
-                table_config = config.get_table_for_file(filename)
+                # Compute relative path for pattern matching (supports path patterns)
+                if base_path:
+                    try:
+                        relative_path = os.path.relpath(file_path, base_path)
+                        # Normalize to forward slashes for pattern matching
+                        relative_path = relative_path.replace("\\", "/")
+                    except ValueError:
+                        # relpath fails on Windows if paths are on different drives
+                        relative_path = os.path.basename(file_path)
+                else:
+                    relative_path = os.path.basename(file_path)
+
+                table_config = config.get_table_for_file(relative_path)
 
                 if not table_config:
-                    add_job_file(job_id, filename, error="No matching table configuration")
+                    add_job_file(job_id, relative_path, error="No matching table configuration")
                     files_failed += 1
                     continue
 
@@ -543,7 +556,7 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
 
                     add_job_file(
                         job_id,
-                        filename,
+                        relative_path,
                         table_name=table_config.target_table,
                         inserted=result.inserted,
                         updated=result.updated,
@@ -561,7 +574,7 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
                         files_failed += 1
 
                 except Exception as e:
-                    add_job_file(job_id, filename, table_name=table_config.target_table, error=str(e))
+                    add_job_file(job_id, relative_path, table_name=table_config.target_table, error=str(e))
                     add_job_error(job_id, str(e), "ImportError")
                     files_failed += 1
 
@@ -607,13 +620,25 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
                 for error in download_result.errors:
                     add_job_error(job_id, error, "SFTPError")
 
+                # Use temp_dir as base for computing relative paths (supports path patterns)
+                sftp_base_path = download_result.temp_dir
+
                 for file_path in download_result.local_paths:
                     import os
-                    filename = os.path.basename(file_path)
-                    table_config = config.get_table_for_file(filename)
+                    # Compute relative path for pattern matching
+                    if sftp_base_path:
+                        try:
+                            relative_path = os.path.relpath(file_path, sftp_base_path)
+                            relative_path = relative_path.replace("\\", "/")
+                        except ValueError:
+                            relative_path = os.path.basename(file_path)
+                    else:
+                        relative_path = os.path.basename(file_path)
+
+                    table_config = config.get_table_for_file(relative_path)
 
                     if not table_config:
-                        add_job_file(job_id, filename, error="No matching table configuration")
+                        add_job_file(job_id, relative_path, error="No matching table configuration")
                         files_failed += 1
                         continue
 
@@ -634,7 +659,7 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
 
                         add_job_file(
                             job_id,
-                            filename,
+                            relative_path,
                             table_name=table_config.target_table,
                             inserted=result.inserted,
                             updated=result.updated,
@@ -652,7 +677,7 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
                             files_failed += 1
 
                     except Exception as e:
-                        add_job_file(job_id, filename, table_name=table_config.target_table, error=str(e))
+                        add_job_file(job_id, relative_path, table_name=table_config.target_table, error=str(e))
                         add_job_error(job_id, str(e), "ImportError")
                         files_failed += 1
 

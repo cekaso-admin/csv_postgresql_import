@@ -11,6 +11,7 @@ This module provides a context-managed SFTP client that:
 import fnmatch
 import logging
 import os
+import stat
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,7 +19,7 @@ from typing import List, Optional
 
 import paramiko
 
-from src.config.models import SFTPConfig
+from src.config.models import SFTPConfig, is_path_pattern, matches_pattern
 
 logger = logging.getLogger(__name__)
 
@@ -262,6 +263,70 @@ class SFTPClient:
         except IOError as e:
             raise SFTPError(f"Failed to list files in {self.config.remote_path}: {e}") from e
 
+    def list_files_recursive(
+        self,
+        pattern: str = "*",
+        max_depth: int = 5
+    ) -> List[str]:
+        """
+        List files matching pattern, recursively scanning subdirectories.
+
+        Use this when the pattern contains path components (e.g., "reports/*.csv").
+
+        Args:
+            pattern: Glob pattern that may include path components
+                (e.g., "*.csv", "reports/*.csv", "*/daily/*.csv")
+            max_depth: Maximum directory depth to scan (default: 5)
+
+        Returns:
+            List of relative paths (from remote_path) matching the pattern
+
+        Raises:
+            SFTPError: If listing fails
+        """
+        self._ensure_connected()
+
+        try:
+            base_path = self.config.remote_path.rstrip("/")
+            results: List[str] = []
+
+            logger.debug(f"Recursively listing files in {base_path} matching '{pattern}'")
+
+            def scan_directory(dir_path: str, relative_prefix: str, depth: int) -> None:
+                if depth > max_depth:
+                    logger.debug(f"Max depth {max_depth} reached at {dir_path}")
+                    return
+
+                try:
+                    entries = self._sftp.listdir_attr(dir_path)
+                except IOError as e:
+                    logger.warning(f"Cannot list directory {dir_path}: {e}")
+                    return
+
+                for entry in entries:
+                    entry_name = entry.filename
+                    full_path = f"{dir_path}/{entry_name}"
+                    relative_path = f"{relative_prefix}/{entry_name}" if relative_prefix else entry_name
+
+                    # Check if it's a directory
+                    is_dir = stat.S_ISDIR(entry.st_mode) if entry.st_mode else False
+
+                    if is_dir:
+                        # Recurse into subdirectory
+                        scan_directory(full_path, relative_path, depth + 1)
+                    else:
+                        # Check if file matches pattern
+                        if matches_pattern(pattern, relative_path):
+                            results.append(relative_path)
+
+            scan_directory(base_path, "", 0)
+
+            logger.info(f"Found {len(results)} files matching '{pattern}' (recursive)")
+            return sorted(results)
+
+        except IOError as e:
+            raise SFTPError(f"Failed to list files recursively in {self.config.remote_path}: {e}") from e
+
     def download_files(
         self,
         files: List[str],
@@ -271,7 +336,8 @@ class SFTPClient:
         Download files from remote server to local temp directory.
 
         Args:
-            files: List of filenames to download
+            files: List of relative paths (from remote_path) to download.
+                Can be simple filenames or paths with subdirectories.
             temp_dir: Optional custom temp directory (created if not exists)
 
         Returns:
@@ -294,19 +360,24 @@ class SFTPClient:
 
         logger.info(f"Downloading {len(files)} files to {result.temp_dir}")
 
-        for filename in files:
-            remote_path = os.path.join(self.config.remote_path, filename)
-            local_path = os.path.join(result.temp_dir, filename)
+        for relative_path in files:
+            remote_full_path = f"{self.config.remote_path.rstrip('/')}/{relative_path}"
+            local_path = os.path.join(result.temp_dir, relative_path)
+
+            # Create subdirectories if needed (for path patterns)
+            local_dir = os.path.dirname(local_path)
+            if local_dir and not os.path.exists(local_dir):
+                os.makedirs(local_dir, exist_ok=True)
 
             try:
-                logger.debug(f"Downloading: {remote_path} -> {local_path}")
-                self._sftp.get(remote_path, local_path)
+                logger.debug(f"Downloading: {remote_full_path} -> {local_path}")
+                self._sftp.get(remote_full_path, local_path)
 
                 result.local_paths.append(local_path)
-                result.remote_files.append(filename)
+                result.remote_files.append(relative_path)
 
             except IOError as e:
-                error_msg = f"Failed to download {filename}: {e}"
+                error_msg = f"Failed to download {relative_path}: {e}"
                 logger.error(error_msg)
                 result.errors.append(error_msg)
 
@@ -322,14 +393,21 @@ class SFTPClient:
         List and download all files matching pattern.
 
         Convenience method combining list_files() and download_files().
+        Automatically uses recursive listing when pattern contains path components.
 
         Args:
-            pattern: Glob pattern to match files
+            pattern: Glob pattern to match files. Can include path components
+                (e.g., "reports/*.csv") for recursive scanning.
 
         Returns:
             DownloadResult with local paths
         """
-        files = self.list_files(pattern)
+        # Use recursive listing if pattern contains path components
+        if is_path_pattern(pattern):
+            files = self.list_files_recursive(pattern)
+        else:
+            files = self.list_files(pattern)
+
         if not files:
             logger.warning(f"No files found matching '{pattern}'")
             return DownloadResult()
