@@ -11,11 +11,18 @@ Supports two modes:
 """
 
 import fnmatch
+import logging
 import re
+import warnings
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Dict, List, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+if TYPE_CHECKING:
+    from src.hooks.models import HookConfig
+
+logger = logging.getLogger(__name__)
 
 
 def is_path_pattern(pattern: str) -> bool:
@@ -335,6 +342,68 @@ class ProjectConfig(BaseModel):
     table_naming: TableNamingConfig = Field(default_factory=TableNamingConfig)
     tables: List[TableConfig] = Field(default_factory=list)
     refresh_materialized_views: bool = False
+    hooks: Optional[Dict] = Field(
+        default=None,
+        description="Hook configuration for pre/post import actions"
+    )
+
+    def get_effective_hooks(self) -> "HookConfig":
+        """
+        Get the effective hook configuration, converting legacy settings.
+
+        This method:
+        1. Returns the hooks config if explicitly set
+        2. Converts refresh_materialized_views=True to equivalent hook
+        3. Returns empty HookConfig if neither is set
+
+        The legacy refresh_materialized_views setting is converted to:
+            hooks:
+              post_import:
+                - type: refresh_views
+                  on_error: warn
+
+        Returns:
+            HookConfig with all effective hooks
+        """
+        from src.hooks.models import HookAction, HookConfig, OnErrorBehavior
+
+        # Start with explicit hooks config or empty
+        if self.hooks:
+            config = HookConfig(**self.hooks)
+        else:
+            config = HookConfig()
+
+        # Convert legacy refresh_materialized_views to hook
+        if self.refresh_materialized_views:
+            # Check if refresh_views is already in post_import hooks
+            has_refresh_hook = any(
+                action.type == "refresh_views" for action in config.post_import
+            )
+
+            if not has_refresh_hook:
+                # Emit deprecation warning
+                warnings.warn(
+                    "refresh_materialized_views is deprecated. "
+                    "Use hooks.post_import with type: refresh_views instead.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+                logger.warning(
+                    f"Project '{self.project}' uses deprecated "
+                    f"refresh_materialized_views. Migrate to hooks config.",
+                    extra={"project": self.project},
+                )
+
+                # Add refresh_views hook
+                config.post_import.append(
+                    HookAction(
+                        type="refresh_views",
+                        name="refresh_views (legacy)",
+                        on_error=OnErrorBehavior.WARN,
+                    )
+                )
+
+        return config
 
     def get_table_for_file(self, path_or_filename: str) -> Optional[TableConfig]:
         """

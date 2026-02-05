@@ -9,9 +9,13 @@ Endpoints:
 """
 
 import logging
+import os
+import tempfile
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+
+from src.hooks import HookContext, HookEngine, HookPoint
 
 from src.api.auth import require_api_key
 from src.api.schemas import (
@@ -505,21 +509,62 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
         database_url = connection.database_url
         logger.info(f"Using connection '{connection.name}' for import")
 
+        # Initialize hook system
+        hooks_config = config.get_effective_hooks()
+        hook_engine = HookEngine(hooks_config)
+
+        # Log deprecation warning if legacy refresh_materialized_views is used
+        if config.refresh_materialized_views:
+            logger.warning(
+                f"Project '{project_name}' uses deprecated refresh_materialized_views. "
+                "Migrate to hooks.post_import with type: refresh_views."
+            )
+
         # Determine files to process
         local_files = request.local_files
 
         if local_files:
             # Process local files directly
-            import os
             base_path = request.local_files_base_path
 
+            # Validate files exist first
+            valid_file_paths = []
             for file_path in local_files:
                 if not os.path.exists(file_path):
                     add_job_file(job_id, os.path.basename(file_path), error="File not found")
                     add_job_error(job_id, f"File not found: {file_path}", "FileNotFound")
                     files_failed += 1
-                    continue
+                else:
+                    valid_file_paths.append(file_path)
 
+            # Create temp_dir for hook file transformations (if needed)
+            temp_dir = base_path or tempfile.mkdtemp(prefix=f"cpi_local_{job_id}_")
+
+            # Initialize hook context with file paths
+            hook_context = HookContext(
+                job_id=job_id,
+                project_name=project_name,
+                database_url=database_url,
+                temp_dir=temp_dir,
+                file_paths=list(valid_file_paths),
+            )
+
+            # Execute post_file_prepare hooks (e.g., DBF->CSV conversion)
+            if hooks_config.post_file_prepare:
+                hook_result = hook_engine.execute_hooks(
+                    HookPoint.POST_FILE_PREPARE, hook_context
+                )
+                # Record hook errors
+                for hr in hook_result.results:
+                    if not hr.success:
+                        add_job_error(job_id, hr.error or "Hook failed", "HookError")
+
+                if hook_result.should_abort:
+                    logger.error(f"Job {job_id} aborted due to critical hook failure")
+                    raise ValueError("Import aborted: critical hook failure in post_file_prepare")
+
+            # Import loop uses context.file_paths (may have been transformed by hooks)
+            for file_path in hook_context.file_paths:
                 # Compute relative path for pattern matching (supports path patterns)
                 if base_path:
                     try:
@@ -623,8 +668,31 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
                 # Use temp_dir as base for computing relative paths (supports path patterns)
                 sftp_base_path = download_result.temp_dir
 
-                for file_path in download_result.local_paths:
-                    import os
+                # Initialize hook context with downloaded file paths
+                hook_context = HookContext(
+                    job_id=job_id,
+                    project_name=project_name,
+                    database_url=database_url,
+                    temp_dir=sftp_base_path,
+                    file_paths=list(download_result.local_paths),
+                )
+
+                # Execute post_file_prepare hooks (e.g., DBF->CSV conversion)
+                if hooks_config.post_file_prepare:
+                    hook_result = hook_engine.execute_hooks(
+                        HookPoint.POST_FILE_PREPARE, hook_context
+                    )
+                    # Record hook errors
+                    for hr in hook_result.results:
+                        if not hr.success:
+                            add_job_error(job_id, hr.error or "Hook failed", "HookError")
+
+                    if hook_result.should_abort:
+                        logger.error(f"Job {job_id} aborted due to critical hook failure")
+                        raise ValueError("Import aborted: critical hook failure in post_file_prepare")
+
+                # Import loop uses context.file_paths (may have been transformed by hooks)
+                for file_path in hook_context.file_paths:
                     # Compute relative path for pattern matching
                     if sftp_base_path:
                         try:
@@ -681,24 +749,39 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
                         add_job_error(job_id, str(e), "ImportError")
                         files_failed += 1
 
-        # Refresh materialized views if configured
-        if config.refresh_materialized_views and database_url and files_processed > 0:
-            from src.db.schema import refresh_materialized_views
-            logger.info(f"Refreshing materialized views for job {job_id}")
-            refresh_result = refresh_materialized_views(database_url=database_url)
-            if refresh_result.views_refreshed:
-                logger.info(f"Refreshed {len(refresh_result.views_refreshed)} materialized views")
-            if refresh_result.errors:
-                for error in refresh_result.errors:
-                    add_job_error(job_id, error, "MaterializedViewRefreshError")
+                # Update hook context with file processing results for SFTP path
+                hook_context.files_processed = files_processed
+                hook_context.files_failed = files_failed
+                hook_context.total_inserted = total_inserted
+                hook_context.total_updated = total_updated
 
-        # Determine final status
+        # Determine final status first (needed for hook context)
         if files_failed == 0 and files_processed > 0:
             status = "completed"
         elif files_processed > 0 and files_failed > 0:
             status = "partial"
         else:
             status = "failed"
+
+        # Execute post_import hooks (refresh views, run SQL, etc.)
+        if hooks_config.post_import and database_url:
+            # Create/update hook context for post_import hooks
+            # Use existing context if SFTP, create new one if local files
+            if not local_files:
+                # SFTP path - context already exists, update status
+                hook_context.status = status
+            else:
+                # Local files path - context exists from earlier, update it
+                hook_context.files_processed = files_processed
+                hook_context.files_failed = files_failed
+                hook_context.total_inserted = total_inserted
+                hook_context.total_updated = total_updated
+                hook_context.status = status
+
+            post_result = hook_engine.execute_hooks(HookPoint.POST_IMPORT, hook_context)
+            for hr in post_result.results:
+                if not hr.success:
+                    add_job_error(job_id, hr.error or "Hook failed", "HookError")
 
         # Update job with final status
         update_job_status(

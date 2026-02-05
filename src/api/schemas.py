@@ -185,6 +185,53 @@ class TableConfigSchema(BaseModel):
         populate_by_name = True
 
 
+# =============================================================================
+# Hook Schemas
+# =============================================================================
+
+class HookActionSchema(BaseModel):
+    """
+    Configuration for a single hook action.
+
+    The `type` field identifies which executor handles this action.
+    Additional fields depend on the action type.
+    """
+    type: str = Field(..., description="Action type identifier (e.g., 'refresh_views', 'run_sql')")
+    name: Optional[str] = Field(None, description="Optional friendly name for this hook")
+    enabled: bool = Field(True, description="Whether this hook is enabled")
+    on_error: str = Field("warn", description="Error handling: 'fail', 'warn', or 'ignore'")
+
+    class Config:
+        extra = "allow"  # Allow action-specific fields
+
+
+class HookConfigSchema(BaseModel):
+    """
+    Configuration for hooks at each lifecycle point.
+
+    Each field is a list of HookActionSchema that will execute at that point.
+    """
+    pre_import: Optional[List[HookActionSchema]] = Field(
+        None, description="Hooks to run before any processing"
+    )
+    post_file_prepare: Optional[List[HookActionSchema]] = Field(
+        None, description="Hooks to run after files are ready (SFTP download or local files)"
+    )
+    pre_file_import: Optional[List[HookActionSchema]] = Field(
+        None, description="Hooks to run before each file import"
+    )
+    post_file_import: Optional[List[HookActionSchema]] = Field(
+        None, description="Hooks to run after each file import"
+    )
+    post_import: Optional[List[HookActionSchema]] = Field(
+        None, description="Hooks to run after all files processed"
+    )
+
+
+# =============================================================================
+# Project Schemas
+# =============================================================================
+
 class ProjectConfigSchema(BaseModel):
     """Full project configuration (without connection - now managed separately)."""
     name: str
@@ -192,7 +239,14 @@ class ProjectConfigSchema(BaseModel):
     defaults: Optional[DefaultsSchema] = None
     table_naming: Optional[TableNamingSchema] = None
     tables: Optional[List[TableConfigSchema]] = None
-    refresh_materialized_views: bool = False
+    refresh_materialized_views: bool = Field(
+        False,
+        description="Deprecated: use hooks.post_import with type: refresh_views instead"
+    )
+    hooks: Optional[HookConfigSchema] = Field(
+        None,
+        description="Hook configuration for pre/post import actions"
+    )
 
 
 class ProjectCreate(BaseModel):

@@ -4,6 +4,9 @@ psycopg2-binary>=2.9.0     # PostgreSQL adapter
 # CSV Processing
 pandas>=2.0.0              # DataFrame operations
 
+# DBF Processing
+dbf>=0.99.0                # DBF to CSV conversion (ethanfurman/dbf)
+
 # API (for n8n integration)
 fastapi>=0.100.0           # API framework
 uvicorn>=0.23.0            # ASGI server
