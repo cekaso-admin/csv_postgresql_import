@@ -329,7 +329,7 @@ class HookEngine:
                             "hook_name": hook_name,
                             "hook_type": action_type,
                             "duration_seconds": hook_result.duration_seconds,
-                            "message": hook_result.message,
+                            "hook_message": hook_result.message,
                         },
                     )
 
