@@ -457,6 +457,19 @@ class DbfToCsvExecutor(HookExecutor):
 
                 table.open()
 
+                # Workaround for dbf library bug: memo field decoder
+                # receives str instead of bytes, causing TypeError.
+                # Patch the decoder to pass through already-decoded strings.
+                if not ignore_memos and hasattr(table, '_meta') and hasattr(table._meta, 'decoder'):
+                    _original_decoder = table._meta.decoder
+
+                    def _safe_decoder(data, _orig=_original_decoder):
+                        if isinstance(data, str):
+                            return (data, len(data))
+                        return _orig(data)
+
+                    table._meta.decoder = _safe_decoder
+
                 # Get encoding name for logging
                 if try_encoding:
                     used_encoding = try_encoding
@@ -502,8 +515,10 @@ class DbfToCsvExecutor(HookExecutor):
                 table.close()
                 return csv_path, used_encoding
 
-            except UnicodeDecodeError as e:
+            except (UnicodeDecodeError, TypeError) as e:
                 # Encoding failed, try next one
+                # TypeError can occur when dbf library's memo decoder
+                # receives str instead of bytes with certain codepages
                 if table:
                     try:
                         table.close()
