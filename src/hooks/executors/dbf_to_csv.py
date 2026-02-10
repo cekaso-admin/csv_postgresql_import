@@ -13,6 +13,7 @@ Usage in project config:
           input_pattern: "*.dbf"
           encoding: "auto"        # or specific encoding like "cp850"
           delete_original: false
+          ignore_memos: true      # skip memo fields (default: true)
           on_error: fail
 """
 
@@ -142,6 +143,7 @@ class DbfToCsvExecutor(HookExecutor):
               input_pattern: "*.dbf"  # Glob pattern for DBF files (default: "*.dbf")
               encoding: "auto"        # Encoding or "auto" for detection (default: "auto")
               delete_original: false  # Delete original DBF after conversion (default: false)
+              ignore_memos: true      # Skip memo fields; set false to include (default: true)
               on_error: fail          # Error handling: fail, warn, ignore
         ```
 
@@ -161,6 +163,8 @@ class DbfToCsvExecutor(HookExecutor):
                 - input_pattern: Glob pattern to match DBF files (default: "*.dbf")
                 - encoding: Character encoding or "auto" (default: "auto")
                 - delete_original: Whether to delete original DBF files (default: False)
+                - ignore_memos: Whether to skip memo fields (default: True). Set to
+                  False to include memo fields; requires a companion .fpt file.
             context: Hook context with file_paths to process
 
         Returns:
@@ -193,6 +197,7 @@ class DbfToCsvExecutor(HookExecutor):
         input_pattern = action.get("input_pattern", "*.dbf")
         encoding = action.get("encoding", "auto")
         delete_original = action.get("delete_original", False)
+        ignore_memos = action.get("ignore_memos", True)
 
         logger.info(
             f"Converting DBF files matching '{input_pattern}'",
@@ -235,6 +240,7 @@ class DbfToCsvExecutor(HookExecutor):
                 csv_path, used_encoding = self._convert_dbf_to_csv(
                     dbf_path=dbf_path,
                     encoding=encoding,
+                    ignore_memos=ignore_memos,
                 )
                 transformed_files[dbf_path] = csv_path
                 converted_count += 1
@@ -262,6 +268,32 @@ class DbfToCsvExecutor(HookExecutor):
                             f"Failed to delete original DBF file {dbf_path}: {e}",
                             extra={"job_id": context.job_id},
                         )
+
+                    # Delete companion files (.fpt, .dbt, .cdx, .mdx, .ntx)
+                    companion_extensions = {".fpt", ".dbt", ".cdx", ".mdx", ".ntx"}
+                    dbf_stem = Path(dbf_path).stem.lower()
+                    dbf_dir = Path(dbf_path).parent
+                    try:
+                        dir_entries = os.listdir(dbf_dir)
+                    except OSError:
+                        dir_entries = []
+                    for entry in dir_entries:
+                        entry_path = Path(dbf_dir) / entry
+                        if (
+                            entry_path.stem.lower() == dbf_stem
+                            and entry_path.suffix.lower() in companion_extensions
+                        ):
+                            try:
+                                os.remove(str(entry_path))
+                                logger.debug(
+                                    f"Deleted companion file: {entry_path}",
+                                    extra={"job_id": context.job_id},
+                                )
+                            except OSError as e:
+                                logger.warning(
+                                    f"Failed to delete companion file {entry_path}: {e}",
+                                    extra={"job_id": context.job_id},
+                                )
 
             except Exception as e:
                 error_msg = f"Failed to convert {dbf_path}: {e}"
@@ -347,6 +379,7 @@ class DbfToCsvExecutor(HookExecutor):
         self,
         dbf_path: str,
         encoding: str,
+        ignore_memos: bool = True,
     ) -> Tuple[str, str]:
         """
         Convert a single DBF file to CSV using ethanfurman/dbf library.
@@ -356,18 +389,46 @@ class DbfToCsvExecutor(HookExecutor):
         Args:
             dbf_path: Path to the DBF file
             encoding: Character encoding or "auto" for detection
+            ignore_memos: Whether to skip memo fields (default: True). When False,
+                a companion .fpt file must exist alongside the DBF file.
 
         Returns:
             Tuple of (path to created CSV file, encoding used)
 
         Raises:
-            Exception: If conversion fails with all attempted encodings
+            Exception: If conversion fails with all attempted encodings, or if
+                ignore_memos is False and no companion .fpt file is found
         """
         import dbf
 
         # Determine output path (same directory, .csv extension)
         dbf_file = Path(dbf_path)
         csv_path = str(dbf_file.with_suffix(".csv"))
+
+        # Pre-check for companion .fpt file when memo support is requested
+        if not ignore_memos:
+            dbf_dir = dbf_file.parent
+            dbf_stem_lower = dbf_file.stem.lower()
+            fpt_found = False
+            try:
+                for entry in os.listdir(dbf_dir):
+                    entry_path = Path(entry)
+                    if (
+                        entry_path.stem.lower() == dbf_stem_lower
+                        and entry_path.suffix.lower() in {".fpt", ".dbt"}
+                    ):
+                        fpt_found = True
+                        break
+            except OSError:
+                pass
+            if not fpt_found:
+                raise Exception(
+                    f"Memo support requested (ignore_memos=false) but no .fpt/.dbt "
+                    f"companion file found for {dbf_path}. Ensure the companion "
+                    f"file exists in the same directory as the .dbf file, and that "
+                    f"companion_extensions is configured in project defaults "
+                    f"to download companion files via SFTP."
+                )
 
         # Build list of encodings to try
         encodings_to_try: List[Optional[str]] = []
@@ -388,11 +449,11 @@ class DbfToCsvExecutor(HookExecutor):
                 # Open DBF file
                 if try_encoding:
                     table = dbf.Table(
-                        str(dbf_path), codepage=try_encoding, ignore_memos=True
+                        str(dbf_path), codepage=try_encoding, ignore_memos=ignore_memos
                     )
                 else:
                     # Auto-detect from header
-                    table = dbf.Table(str(dbf_path), ignore_memos=True)
+                    table = dbf.Table(str(dbf_path), ignore_memos=ignore_memos)
 
                 table.open()
 
@@ -524,5 +585,10 @@ class DbfToCsvExecutor(HookExecutor):
         delete_original = action.get("delete_original")
         if delete_original is not None and not isinstance(delete_original, bool):
             return "delete_original must be a boolean"
+
+        # Validate ignore_memos is boolean if provided
+        ignore_memos = action.get("ignore_memos")
+        if ignore_memos is not None and not isinstance(ignore_memos, bool):
+            return "ignore_memos must be a boolean"
 
         return None

@@ -344,6 +344,193 @@ class TestDbfToCsvExecutor:
         assert "/path/to/Data.Dbf" in matches
         assert "/path/to/file.csv" not in matches
 
+    def test_execute_with_ignore_memos_false(self, tmp_path: Path):
+        """Test that ignore_memos=False is passed through to dbf.Table."""
+        from src.hooks.executors.dbf_to_csv import DbfToCsvExecutor
+
+        executor = DbfToCsvExecutor()
+
+        dbf_path = str(tmp_path / "test_data.dbf")
+        Path(dbf_path).touch()
+        # Create companion .fpt file (required when ignore_memos=False)
+        fpt_path = str(tmp_path / "test_data.fpt")
+        Path(fpt_path).touch()
+
+        context = HookContext(
+            job_id="test-job",
+            project_name="test",
+            database_url="postgresql://localhost/test",
+            file_paths=[dbf_path],
+        )
+        action = {"type": "dbf_to_csv", "ignore_memos": False}
+
+        # Create mock table
+        mock_table = MagicMock()
+        mock_table.field_names = ["ID", "NAME"]
+        mock_table.codepage = MagicMock()
+        mock_table.codepage.name = "utf-8"
+        mock_table.__iter__ = lambda self: iter([])
+        mock_table.open = MagicMock()
+        mock_table.close = MagicMock()
+
+        mock_dbf_module = MagicMock()
+        mock_dbf_module.Table = MagicMock(return_value=mock_table)
+
+        with patch(
+            "src.hooks.executors.dbf_to_csv._check_dbf_available",
+            return_value=True,
+        ):
+            with patch.dict("sys.modules", {"dbf": mock_dbf_module}):
+                result = executor.execute(action, context)
+
+        assert result.success is True
+        # Verify ignore_memos=False was passed to dbf.Table
+        mock_dbf_module.Table.assert_called_once()
+        call_kwargs = mock_dbf_module.Table.call_args
+        assert call_kwargs.kwargs.get("ignore_memos") is False
+
+    def test_execute_with_ignore_memos_default(self, tmp_path: Path):
+        """Test that ignore_memos defaults to True for backward compatibility."""
+        from src.hooks.executors.dbf_to_csv import DbfToCsvExecutor
+
+        executor = DbfToCsvExecutor()
+
+        dbf_path = str(tmp_path / "test_data.dbf")
+        Path(dbf_path).touch()
+
+        context = HookContext(
+            job_id="test-job",
+            project_name="test",
+            database_url="postgresql://localhost/test",
+            file_paths=[dbf_path],
+        )
+        # No ignore_memos key in the action dict
+        action = {"type": "dbf_to_csv"}
+
+        # Create mock table
+        mock_table = MagicMock()
+        mock_table.field_names = ["ID", "NAME"]
+        mock_table.codepage = MagicMock()
+        mock_table.codepage.name = "utf-8"
+        mock_table.__iter__ = lambda self: iter([])
+        mock_table.open = MagicMock()
+        mock_table.close = MagicMock()
+
+        mock_dbf_module = MagicMock()
+        mock_dbf_module.Table = MagicMock(return_value=mock_table)
+
+        with patch(
+            "src.hooks.executors.dbf_to_csv._check_dbf_available",
+            return_value=True,
+        ):
+            with patch.dict("sys.modules", {"dbf": mock_dbf_module}):
+                result = executor.execute(action, context)
+
+        assert result.success is True
+        # Verify ignore_memos=True was passed to dbf.Table (backward compat default)
+        mock_dbf_module.Table.assert_called_once()
+        call_kwargs = mock_dbf_module.Table.call_args
+        assert call_kwargs[1].get("ignore_memos") is True
+
+    def test_missing_fpt_gives_clear_error(self, tmp_path: Path):
+        """Test that missing .fpt file gives a clear error when ignore_memos=False."""
+        from src.hooks.executors.dbf_to_csv import DbfToCsvExecutor
+
+        executor = DbfToCsvExecutor()
+
+        dbf_path = str(tmp_path / "test_data.dbf")
+        Path(dbf_path).touch()
+        # Deliberately do NOT create a .fpt companion file
+
+        context = HookContext(
+            job_id="test-job",
+            project_name="test",
+            database_url="postgresql://localhost/test",
+            file_paths=[dbf_path],
+        )
+        action = {"type": "dbf_to_csv", "ignore_memos": False}
+
+        mock_dbf_module = MagicMock()
+
+        with patch(
+            "src.hooks.executors.dbf_to_csv._check_dbf_available",
+            return_value=True,
+        ):
+            with patch.dict("sys.modules", {"dbf": mock_dbf_module}):
+                result = executor.execute(action, context)
+
+        assert result.success is False
+        assert "companion file" in result.error or ".fpt" in result.error
+
+    def test_validate_config_ignore_memos_valid(self):
+        """Test validate_config accepts valid ignore_memos values."""
+        from src.hooks.executors.dbf_to_csv import DbfToCsvExecutor
+
+        executor = DbfToCsvExecutor()
+
+        assert executor.validate_config({"type": "dbf_to_csv", "ignore_memos": True}) is None
+        assert executor.validate_config({"type": "dbf_to_csv", "ignore_memos": False}) is None
+
+    def test_validate_config_ignore_memos_invalid(self):
+        """Test validate_config rejects non-boolean ignore_memos."""
+        from src.hooks.executors.dbf_to_csv import DbfToCsvExecutor
+
+        executor = DbfToCsvExecutor()
+
+        error = executor.validate_config({"type": "dbf_to_csv", "ignore_memos": "yes"})
+        assert error is not None
+        assert "ignore_memos must be a boolean" in error
+
+    def test_delete_original_also_removes_companion(self, tmp_path: Path):
+        """Test that delete_original removes both DBF and companion .fpt files."""
+        from src.hooks.executors.dbf_to_csv import DbfToCsvExecutor
+
+        executor = DbfToCsvExecutor()
+
+        dbf_path = str(tmp_path / "test.dbf")
+        fpt_path = str(tmp_path / "test.fpt")
+        csv_path = str(tmp_path / "test.csv")
+        Path(dbf_path).touch()
+        Path(fpt_path).touch()
+
+        context = HookContext(
+            job_id="test-job",
+            project_name="test",
+            database_url="postgresql://localhost/test",
+            file_paths=[dbf_path],
+        )
+        action = {"type": "dbf_to_csv", "delete_original": True}
+
+        # Create mock table
+        mock_table = MagicMock()
+        mock_table.field_names = ["id"]
+        mock_table.codepage = MagicMock()
+        mock_table.codepage.name = "utf-8"
+        mock_table.__iter__ = lambda self: iter([])
+        mock_table.open = MagicMock()
+        mock_table.close = MagicMock()
+
+        mock_dbf_module = MagicMock()
+        mock_dbf_module.Table = MagicMock(return_value=mock_table)
+
+        # Verify both files exist before conversion
+        assert os.path.exists(dbf_path)
+        assert os.path.exists(fpt_path)
+
+        with patch(
+            "src.hooks.executors.dbf_to_csv._check_dbf_available",
+            return_value=True,
+        ):
+            with patch.dict("sys.modules", {"dbf": mock_dbf_module}):
+                result = executor.execute(action, context)
+
+        assert result.success is True
+        # Both DBF and FPT files should be deleted
+        assert not os.path.exists(dbf_path)
+        assert not os.path.exists(fpt_path)
+        # CSV file should exist
+        assert os.path.exists(csv_path)
+
 
 class TestSanitizeColumnName:
     """Tests for sanitize_column_name function."""

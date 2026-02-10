@@ -414,6 +414,83 @@ class SFTPClient:
 
         return self.download_files(files)
 
+    def download_companion_files(
+        self,
+        remote_files: List[str],
+        companion_extensions: List[str],
+        temp_dir: str
+    ) -> List[str]:
+        """
+        Download companion files that share the same base name as the primary files.
+
+        For each remote file (e.g., DATA.dbf), looks for files with the same stem
+        but different extensions (e.g., DATA.fpt, DATA.dbt). Matching is
+        case-insensitive to handle Linux servers with mixed-case filenames.
+
+        Args:
+            remote_files: List of relative paths from remote_path (e.g., ["DATA.dbf"])
+            companion_extensions: Extensions to look for (e.g., [".fpt", ".dbt"])
+            temp_dir: Local directory to download companion files into
+
+        Returns:
+            List of local paths of successfully downloaded companion files
+        """
+        self._ensure_connected()
+
+        downloaded: List[str] = []
+
+        if not remote_files or not companion_extensions:
+            return downloaded
+
+        # List the remote directory once for case-insensitive matching
+        remote_path = self.config.remote_path.rstrip("/")
+        try:
+            all_files = self._sftp.listdir(remote_path)
+        except IOError as e:
+            logger.error(f"Failed to list remote directory {remote_path}: {e}")
+            return downloaded
+
+        # Build case-insensitive lookup: lowered name -> actual name on server
+        name_lookup = {name.lower(): name for name in all_files}
+
+        for relative_path in remote_files:
+            stem = Path(relative_path).stem
+            parent = str(Path(relative_path).parent)
+
+            for ext in companion_extensions:
+                # Compute the expected companion filename
+                companion_name = f"{stem}{ext}"
+                actual_name = name_lookup.get(companion_name.lower())
+
+                if not actual_name:
+                    logger.debug(
+                        f"Companion file not found: {companion_name} "
+                        f"(for {relative_path})"
+                    )
+                    continue
+
+                remote_full_path = f"{remote_path}/{actual_name}"
+
+                # Place companion in the same local subdirectory as the primary file
+                if parent and parent != ".":
+                    local_dir = os.path.join(temp_dir, parent)
+                    os.makedirs(local_dir, exist_ok=True)
+                    local_path = os.path.join(local_dir, actual_name)
+                else:
+                    local_path = os.path.join(temp_dir, actual_name)
+
+                try:
+                    logger.debug(f"Downloading companion: {remote_full_path} -> {local_path}")
+                    self._sftp.get(remote_full_path, local_path)
+                    downloaded.append(local_path)
+                except Exception as e:
+                    logger.error(
+                        f"Failed to download companion file {actual_name}: {e}"
+                    )
+
+        logger.info(f"Downloaded {len(downloaded)} companion files")
+        return downloaded
+
 
 def test_connection(config: SFTPConfig) -> bool:
     """

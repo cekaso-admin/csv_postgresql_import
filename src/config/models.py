@@ -178,6 +178,9 @@ class DefaultsConfig(BaseModel):
         rebuild_table: If True, TRUNCATE tables before import (default: False)
         datestyle: PostgreSQL datestyle for date parsing (e.g., "DMY" for European)
         schema: Database schema name (default: "public")
+        companion_extensions: List of file extensions to download alongside
+            primary files (e.g., [".fpt", ".dbt"] for DBF memo support).
+            Each extension must start with a dot.
     """
     model_config = ConfigDict(populate_by_name=True)
 
@@ -189,6 +192,25 @@ class DefaultsConfig(BaseModel):
     rebuild_table: bool = False
     datestyle: Optional[str] = None
     db_schema: str = Field(default="public", alias="schema")
+    companion_extensions: List[str] = Field(
+        default_factory=list,
+        description=(
+            "File extensions to download alongside primary files "
+            "(e.g., .fpt/.dbt for DBF memo support)"
+        ),
+    )
+
+    @field_validator("companion_extensions")
+    @classmethod
+    def validate_companion_extensions(cls, v: List[str]) -> List[str]:
+        """Ensure each companion extension starts with a dot, normalize to lowercase, and deduplicate."""
+        for ext in v:
+            if not ext.startswith("."):
+                raise ValueError(
+                    f"Companion extension '{ext}' must start with '.' "
+                    f"(e.g., '.{ext}')"
+                )
+        return list(dict.fromkeys(ext.lower() for ext in v))
 
     @field_validator("primary_key")
     @classmethod

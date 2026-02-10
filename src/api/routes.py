@@ -662,6 +662,16 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
 
                 download_result = sftp.download_matching_files(pattern)
 
+                # Download companion files (e.g., .fpt for DBF memo support)
+                if config.defaults and config.defaults.companion_extensions and download_result.remote_files:
+                    companion_paths = sftp.download_companion_files(
+                        remote_files=download_result.remote_files,
+                        companion_extensions=config.defaults.companion_extensions,
+                        temp_dir=download_result.temp_dir,
+                    )
+                    if companion_paths:
+                        logger.info(f"Downloaded {len(companion_paths)} companion file(s)")
+
                 for error in download_result.errors:
                     add_job_error(job_id, error, "SFTPError")
 
