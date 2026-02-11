@@ -157,6 +157,7 @@ class DefaultsSchema(BaseModel):
     """Default settings for auto-discovered tables."""
     file_pattern: str = "*.csv"
     download_pattern: Optional[str] = None
+    companion_extensions: Optional[List[str]] = None
     primary_key: Union[str, List[str]] = "id"
     delimiter: str = ","
     encoding: str = "utf-8"

@@ -16,7 +16,7 @@ class HookExecutor(ABC):
     Abstract base class for hook executors.
 
     Extend this class to create custom hook actions. Each executor handles
-    a specific action type (e.g., "refresh_views", "dbf_to_csv", "run_sql").
+    a specific action type (e.g., "refresh_views", "run_sql").
 
     Class Attributes:
         action_type: Unique identifier used in config (e.g., type: "my_action").

@@ -186,6 +186,7 @@ class DefaultsConfig(BaseModel):
 
     file_pattern: str = "*.csv"
     download_pattern: Optional[str] = None
+    companion_extensions: Optional[List[str]] = None
     primary_key: Union[str, List[str]]
     delimiter: str = ","
     encoding: str = "utf-8"

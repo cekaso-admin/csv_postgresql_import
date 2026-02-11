@@ -60,11 +60,9 @@ def _register_executor(
 
 def _register_builtin_executors() -> None:
     """Register all built-in hook executors."""
-    from src.hooks.executors.dbf_to_csv import DbfToCsvExecutor
     from src.hooks.executors.refresh_views import RefreshViewsExecutor
 
     builtin_executors = [
-        DbfToCsvExecutor,
         RefreshViewsExecutor,
     ]
 

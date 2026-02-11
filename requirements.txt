@@ -5,7 +5,7 @@ psycopg2-binary>=2.9.0     # PostgreSQL adapter
 pandas>=2.0.0              # DataFrame operations
 
 # DBF Processing
-dbf>=0.99.0                # DBF to CSV conversion (ethanfurman/dbf)
+pyogrio>=0.7.0             # Direct DBF reading via GDAL (fast, C-backed)
 
 # API (for n8n integration)
 fastapi>=0.100.0           # API framework

@@ -461,6 +461,38 @@ async def delete_project_endpoint(name: str):
 # Import Routes
 # =============================================================================
 
+def _import_file(file_path: str, table_config, database_url: str):
+    """Dispatch to the appropriate importer based on file extension."""
+    from src.db.importer import import_csv, import_dbf
+    ext = os.path.splitext(file_path)[1].lower()
+    if ext == ".dbf":
+        return import_dbf(
+            file_path=file_path,
+            table_name=table_config.target_table,
+            primary_key=table_config.primary_key,
+            column_mapping=table_config.column_mapping,
+            rebuild_table=table_config.rebuild_table,
+            schema=table_config.db_schema,
+            encoding=table_config.encoding if table_config.encoding != "utf-8" else None,
+            datestyle=table_config.datestyle,
+            database_url=database_url,
+        )
+    else:
+        return import_csv(
+            file_path=file_path,
+            table_name=table_config.target_table,
+            primary_key=table_config.primary_key,
+            column_mapping=table_config.column_mapping,
+            rebuild_table=table_config.rebuild_table,
+            schema=table_config.db_schema,
+            delimiter=table_config.delimiter,
+            encoding=table_config.encoding,
+            skiprows=table_config.skiprows,
+            datestyle=table_config.datestyle,
+            database_url=database_url,
+        )
+
+
 def run_import_job(job_id: str, project_name: str, request: ImportRequest):
     """
     Background task to run an import job.
@@ -472,7 +504,6 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
 
     from src.config.loader import load_config_from_dict
     from src.config.models import SFTPConfig
-    from src.db.importer import import_csv
     from src.services.webhook import send_webhook, WebhookPayload
 
     logger.info(f"Starting background import job {job_id}")
@@ -585,19 +616,7 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
                     continue
 
                 try:
-                    result = import_csv(
-                        file_path=file_path,
-                        table_name=table_config.target_table,
-                        primary_key=table_config.primary_key,
-                        column_mapping=table_config.column_mapping,
-                        rebuild_table=table_config.rebuild_table,
-                        schema=table_config.db_schema,
-                        delimiter=table_config.delimiter,
-                        encoding=table_config.encoding,
-                        skiprows=table_config.skiprows,
-                        datestyle=table_config.datestyle,
-                        database_url=database_url,
-                    )
+                    result = _import_file(file_path, table_config, database_url)
 
                     add_job_file(
                         job_id,
@@ -662,15 +681,10 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
 
                 download_result = sftp.download_matching_files(pattern)
 
-                # Download companion files from dbf_to_csv hook configs
+                # Download companion files (e.g., .fpt memo files for .dbf)
                 companion_extensions = []
-                for action in hooks_config.post_file_prepare:
-                    action_dict = action.model_dump()
-                    if action_dict.get("type") == "dbf_to_csv":
-                        exts = action_dict.get("companion_extensions", [])
-                        if isinstance(exts, list):
-                            companion_extensions.extend(exts)
-                companion_extensions = list(set(ext.lower() for ext in companion_extensions if ext))
+                if config.defaults and config.defaults.companion_extensions:
+                    companion_extensions = list(config.defaults.companion_extensions)
 
                 if companion_extensions and download_result.remote_files:
                     companion_paths = sftp.download_companion_files(
@@ -730,19 +744,7 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
                         continue
 
                     try:
-                        result = import_csv(
-                            file_path=file_path,
-                            table_name=table_config.target_table,
-                            primary_key=table_config.primary_key,
-                            column_mapping=table_config.column_mapping,
-                            rebuild_table=table_config.rebuild_table,
-                            schema=table_config.db_schema,
-                            delimiter=table_config.delimiter,
-                            encoding=table_config.encoding,
-                            skiprows=table_config.skiprows,
-                            datestyle=table_config.datestyle,
-                            database_url=database_url,
-                        )
+                        result = _import_file(file_path, table_config, database_url)
 
                         add_job_file(
                             job_id,
