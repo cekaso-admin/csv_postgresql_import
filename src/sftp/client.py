@@ -480,7 +480,13 @@ class SFTPClient:
                     local_path = os.path.join(temp_dir, actual_name)
 
                 try:
-                    logger.debug(f"Downloading companion: {remote_full_path} -> {local_path}")
+                    # Log file size for progress visibility
+                    try:
+                        file_stat = self._sftp.stat(remote_full_path)
+                        size_mb = file_stat.st_size / (1024 * 1024)
+                        logger.info(f"Downloading companion: {actual_name} ({size_mb:.1f} MB)")
+                    except Exception:
+                        logger.info(f"Downloading companion: {actual_name}")
                     self._sftp.get(remote_full_path, local_path)
                     downloaded.append(local_path)
                 except Exception as e:

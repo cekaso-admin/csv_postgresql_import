@@ -224,7 +224,7 @@ class ImportJob:
                 # Use defaults file_pattern if available
                 pattern = "*.csv"
                 if self.config.defaults:
-                    pattern = self.config.defaults.file_pattern
+                    pattern = self.config.defaults.download_pattern or self.config.defaults.file_pattern
 
                 download_result = sftp.download_matching_files(pattern)
 

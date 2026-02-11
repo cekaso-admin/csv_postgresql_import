@@ -21,13 +21,13 @@ Previously, the `dbf_to_csv` hook skipped memo fields entirely. With this update
 
 ## What Changed
 
-Two new configuration options were added:
+Two new configuration options were added to the `dbf_to_csv` hook action:
 
-### 1. `companion_extensions` (on project defaults)
+### 1. `companion_extensions` (on `dbf_to_csv` hook)
 
-Tells the SFTP downloader to also fetch companion files alongside the primary files.
+Tells the SFTP downloader to also fetch companion files alongside the primary files. The import pipeline extracts this from the hook config before downloading.
 
-**Location:** `config.defaults.companion_extensions`
+**Location:** `config.hooks.post_file_prepare[].companion_extensions`
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -63,8 +63,7 @@ Both options must be set together for memo support to work with SFTP imports:
   "config": {
     "defaults": {
       "file_pattern": "*.dbf",
-      "primary_key": "ID",
-      "companion_extensions": [".fpt"]
+      "primary_key": "ID"
     },
     "hooks": {
       "post_file_prepare": [
@@ -73,6 +72,7 @@ Both options must be set together for memo support to work with SFTP imports:
           "input_pattern": "*.dbf",
           "encoding": "auto",
           "ignore_memos": false,
+          "companion_extensions": [".fpt"],
           "delete_original": true,
           "on_error": "fail"
         }
@@ -86,10 +86,10 @@ Both options must be set together for memo support to work with SFTP imports:
 
 | Setting | Purpose | Where it acts |
 |---------|---------|---------------|
-| `companion_extensions` | Download `.fpt` files from SFTP | Before hooks run (SFTP download step) |
+| `companion_extensions` | Download `.fpt` files from SFTP | Before hooks run (extracted from hook config, used in SFTP download step) |
 | `ignore_memos` | Read memo data from `.fpt` files | During `dbf_to_csv` hook execution |
 
-The SFTP downloader needs to know which extra files to fetch. The converter needs to know whether to read them. These are independent steps — for **local file imports**, only `ignore_memos: false` is needed (companion files are already on disk).
+Both settings live on the `dbf_to_csv` hook action. The import pipeline extracts `companion_extensions` from hook configs before the SFTP download, while `ignore_memos` is used during conversion. For **local file imports**, only `ignore_memos: false` is needed (companion files are already on disk).
 
 ---
 
@@ -135,7 +135,7 @@ If `ignore_memos: false` is set but no `.fpt`/`.dbt` file exists for a DBF, the 
 Memo support requested (ignore_memos=false) but no .fpt/.dbt companion
 file found for DATA.dbf. Ensure the companion file exists in the same
 directory as the .dbf file, and that companion_extensions is configured
-in project defaults to download companion files via SFTP.
+in the dbf_to_csv hook to download companion files via SFTP.
 ```
 
 This error respects the hook's `on_error` setting (`"fail"`, `"warn"`, or `"ignore"`).
@@ -162,8 +162,7 @@ X-API-Key: your-api-key
   "config": {
     "defaults": {
       "file_pattern": "*.dbf",
-      "primary_key": "HDR_ID",
-      "companion_extensions": [".fpt"]
+      "primary_key": "HDR_ID"
     },
     "hooks": {
       "post_file_prepare": [
@@ -171,6 +170,7 @@ X-API-Key: your-api-key
           "type": "dbf_to_csv",
           "encoding": "auto",
           "ignore_memos": false,
+          "companion_extensions": [".fpt"],
           "delete_original": true,
           "on_error": "fail"
         }
@@ -191,8 +191,7 @@ X-API-Key: your-api-key
   "config": {
     "defaults": {
       "file_pattern": "*.dbf",
-      "primary_key": "HDR_ID",
-      "companion_extensions": [".fpt"]
+      "primary_key": "HDR_ID"
     },
     "hooks": {
       "post_file_prepare": [
@@ -200,6 +199,7 @@ X-API-Key: your-api-key
           "type": "dbf_to_csv",
           "encoding": "auto",
           "ignore_memos": false,
+          "companion_extensions": [".fpt"],
           "delete_original": true,
           "on_error": "fail"
         }
@@ -214,7 +214,7 @@ X-API-Key: your-api-key
 ## Updated TypeScript Types
 
 ```typescript
-// Updated DefaultsConfig - new field
+// DefaultsConfig - no companion_extensions here
 interface DefaultsConfig {
   file_pattern?: string;       // default: "*.csv"
   primary_key: string | string[];
@@ -224,16 +224,16 @@ interface DefaultsConfig {
   rebuild_table?: boolean;     // default: false
   datestyle?: string;          // e.g., "DMY"
   schema?: string;             // default: "public"
-  companion_extensions?: string[];  // NEW - e.g., [".fpt", ".dbt"]
 }
 
-// Updated DbfToCsvHook - new field
+// DbfToCsvHook - companion_extensions and ignore_memos live here
 interface DbfToCsvHook extends BaseHookAction {
   type: 'dbf_to_csv';
   input_pattern?: string;      // default: "*.dbf"
   encoding?: string;           // default: "auto"
   delete_original?: boolean;   // default: false
-  ignore_memos?: boolean;      // NEW - default: true
+  ignore_memos?: boolean;      // default: true
+  companion_extensions?: string[];  // e.g., [".fpt", ".dbt"]
 }
 ```
 
@@ -257,19 +257,18 @@ File Preparation Hooks
 
 When "Include memo fields" is toggled on:
 1. Set `ignore_memos: false` on the hook action
-2. Automatically add `".fpt"` to `config.defaults.companion_extensions` (if not already present)
+2. Automatically add `".fpt"` to `companion_extensions` on the same hook action (if not already present)
 3. Show a hint: "Companion .fpt files will be downloaded alongside .dbf files"
 
 When toggled off:
 1. Set `ignore_memos: true` (or remove the field)
-2. Optionally remove `".fpt"` from `companion_extensions`
+2. Optionally remove `".fpt"` from `companion_extensions` on the hook action
 
 ### Validation hints
 
 | Condition | Message |
 |-----------|---------|
-| `ignore_memos: false` but `companion_extensions` is empty | "Memo support is enabled but no companion extensions are configured. Add .fpt to companion extensions so memo files are downloaded from SFTP." |
-| `companion_extensions` has entries but no `dbf_to_csv` hook | "Companion extensions are configured but no DBF conversion hook is set up." |
+| `ignore_memos: false` but `companion_extensions` is empty on the hook | "Memo support is enabled but no companion extensions are configured. Add .fpt to companion_extensions on the dbf_to_csv hook so memo files are downloaded from SFTP." |
 
 ---
 
@@ -281,14 +280,14 @@ When toggled off:
 {
   "defaults": {
     "file_pattern": "*.dbf",
-    "primary_key": "ID",
-    "companion_extensions": [".fpt"]
+    "primary_key": "ID"
   },
   "hooks": {
     "post_file_prepare": [
       {
         "type": "dbf_to_csv",
         "ignore_memos": false,
+        "companion_extensions": [".fpt"],
         "delete_original": true,
         "on_error": "fail"
       }
@@ -303,14 +302,14 @@ When toggled off:
 {
   "defaults": {
     "file_pattern": "*.dbf",
-    "primary_key": "ID",
-    "companion_extensions": [".dbt"]
+    "primary_key": "ID"
   },
   "hooks": {
     "post_file_prepare": [
       {
         "type": "dbf_to_csv",
         "ignore_memos": false,
+        "companion_extensions": [".dbt"],
         "on_error": "fail"
       }
     ]

@@ -156,6 +156,7 @@ class TableNamingSchema(BaseModel):
 class DefaultsSchema(BaseModel):
     """Default settings for auto-discovered tables."""
     file_pattern: str = "*.csv"
+    download_pattern: Optional[str] = None
     primary_key: Union[str, List[str]] = "id"
     delimiter: str = ","
     encoding: str = "utf-8"
@@ -163,10 +164,6 @@ class DefaultsSchema(BaseModel):
     rebuild_table: bool = False
     datestyle: Optional[str] = None
     db_schema: Optional[str] = Field(None, alias="schema")
-    companion_extensions: List[str] = Field(
-        default_factory=list,
-        description="File extensions to download alongside primary files (e.g., .fpt/.dbt for DBF memo support)",
-    )
 
     class Config:
         populate_by_name = True

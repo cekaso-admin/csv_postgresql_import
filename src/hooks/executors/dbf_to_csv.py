@@ -241,12 +241,14 @@ class DbfToCsvExecutor(HookExecutor):
                     dbf_path=dbf_path,
                     encoding=encoding,
                     ignore_memos=ignore_memos,
+                    job_id=context.job_id,
                 )
                 transformed_files[dbf_path] = csv_path
                 converted_count += 1
 
-                logger.debug(
-                    f"Converted {dbf_path} -> {csv_path} (encoding: {used_encoding})",
+                logger.info(
+                    f"Converted {os.path.basename(dbf_path)} -> {os.path.basename(csv_path)} "
+                    f"(encoding: {used_encoding}, {converted_count}/{len(matching_files)})",
                     extra={
                         "job_id": context.job_id,
                         "source": dbf_path,
@@ -380,6 +382,7 @@ class DbfToCsvExecutor(HookExecutor):
         dbf_path: str,
         encoding: str,
         ignore_memos: bool = True,
+        job_id: Optional[str] = None,
     ) -> Tuple[str, str]:
         """
         Convert a single DBF file to CSV using ethanfurman/dbf library.
@@ -426,7 +429,7 @@ class DbfToCsvExecutor(HookExecutor):
                     f"Memo support requested (ignore_memos=false) but no .fpt/.dbt "
                     f"companion file found for {dbf_path}. Ensure the companion "
                     f"file exists in the same directory as the .dbf file, and that "
-                    f"companion_extensions is configured in project defaults "
+                    f"companion_extensions is configured in the dbf_to_csv hook "
                     f"to download companion files via SFTP."
                 )
 
@@ -497,20 +500,45 @@ class DbfToCsvExecutor(HookExecutor):
                     seen.add(col)
 
                 # Write CSV file
-                with open(csv_path, "w", newline="", encoding="utf-8") as csvfile:
+                with open(csv_path, "w", newline="", encoding="utf-8", buffering=1_048_576) as csvfile:
                     writer = csv.writer(csvfile, quoting=csv.QUOTE_MINIMAL)
 
                     # Write header
                     writer.writerow(sanitized_columns)
 
-                    # Write data rows
+                    # Write data rows with batching and progress logging
+                    row_count = 0
+                    batch = []
+                    BATCH_SIZE = 10_000
+                    total_records = len(table)
+
+                    logger.info(
+                        f"Starting conversion of {os.path.basename(dbf_path)}: "
+                        f"{total_records:,} records",
+                        extra={"job_id": job_id},
+                    )
+
                     for record in table:
                         row = []
                         for field_name in original_columns:
                             value = record[field_name]
-                            formatted_value = format_value(value)
-                            row.append(formatted_value)
-                        writer.writerow(row)
+                            row.append(format_value(value))
+                        batch.append(row)
+                        row_count += 1
+
+                        if len(batch) >= BATCH_SIZE:
+                            writer.writerows(batch)
+                            batch = []
+
+                        if row_count % 50_000 == 0:
+                            logger.info(
+                                f"Converting {os.path.basename(dbf_path)}: "
+                                f"{row_count:,}/{total_records:,} rows",
+                                extra={"job_id": job_id},
+                            )
+
+                    if batch:
+                        writer.writerows(batch)
 
                 table.close()
                 return csv_path, used_encoding
@@ -605,5 +633,14 @@ class DbfToCsvExecutor(HookExecutor):
         ignore_memos = action.get("ignore_memos")
         if ignore_memos is not None and not isinstance(ignore_memos, bool):
             return "ignore_memos must be a boolean"
+
+        # Validate companion_extensions if provided
+        companion_extensions = action.get("companion_extensions")
+        if companion_extensions is not None:
+            if not isinstance(companion_extensions, list):
+                return "companion_extensions must be a list"
+            for ext in companion_extensions:
+                if not isinstance(ext, str) or not ext.startswith("."):
+                    return f"Companion extension '{ext}' must be a string starting with '.'"
 
         return None

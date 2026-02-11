@@ -658,15 +658,24 @@ def run_import_job(job_id: str, project_name: str, request: ImportRequest):
             with SFTPClient(sftp_config) as sftp:
                 pattern = "*.csv"
                 if config.defaults:
-                    pattern = config.defaults.file_pattern
+                    pattern = config.defaults.download_pattern or config.defaults.file_pattern
 
                 download_result = sftp.download_matching_files(pattern)
 
-                # Download companion files (e.g., .fpt for DBF memo support)
-                if config.defaults and config.defaults.companion_extensions and download_result.remote_files:
+                # Download companion files from dbf_to_csv hook configs
+                companion_extensions = []
+                for action in hooks_config.post_file_prepare:
+                    action_dict = action.model_dump()
+                    if action_dict.get("type") == "dbf_to_csv":
+                        exts = action_dict.get("companion_extensions", [])
+                        if isinstance(exts, list):
+                            companion_extensions.extend(exts)
+                companion_extensions = list(set(ext.lower() for ext in companion_extensions if ext))
+
+                if companion_extensions and download_result.remote_files:
                     companion_paths = sftp.download_companion_files(
                         remote_files=download_result.remote_files,
-                        companion_extensions=config.defaults.companion_extensions,
+                        companion_extensions=companion_extensions,
                         temp_dir=download_result.temp_dir,
                     )
                     if companion_paths:
