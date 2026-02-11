@@ -133,7 +133,8 @@ class TestImportDbfColumnSanitization:
         })
 
         mock_pyogrio = _install_mock_pyogrio()
-        mock_pyogrio.read_info.return_value = {"features": 2}
+        mock_pyogrio.read_info.return_value = {"features": 1}
+        # Full-file read returns the complete DataFrame
         mock_pyogrio.read_dataframe.return_value = sample_df
 
         try:
@@ -182,13 +183,7 @@ class TestImportDbfNullHandling:
         dbf_file = tmp_path / "data.dbf"
         dbf_file.write_bytes(b"\x00")
 
-        # Sample with clean column names so sanitization is a no-op
-        sample_df = pd.DataFrame({
-            "id": ["1"],
-            "name": ["Alice"],
-        })
-
-        # Data chunk that will contain NaN
+        # Full DataFrame with NaN values
         data_df = pd.DataFrame({
             "id": ["1", "2"],
             "name": ["Alice", np.nan],
@@ -196,13 +191,8 @@ class TestImportDbfNullHandling:
 
         mock_pyogrio = _install_mock_pyogrio()
         mock_pyogrio.read_info.return_value = {"features": 2}
-
-        # First call: sample (max_features=1); subsequent calls: data chunks
-        mock_pyogrio.read_dataframe.side_effect = [
-            sample_df,  # sample read for column discovery
-            data_df,    # first chunk
-            pd.DataFrame(columns=["id", "name"]),  # empty = end of iteration
-        ]
+        # Full-file read returns the complete DataFrame
+        mock_pyogrio.read_dataframe.return_value = data_df
 
         captured_chunks = []
 

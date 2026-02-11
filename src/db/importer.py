@@ -319,13 +319,14 @@ def _import_chunks(
                 # Set datestyle if specified (e.g., "DMY" for European, "MDY" for US)
                 if datestyle:
                     valid_datestyles = {"DMY", "MDY", "YMD"}
-                    if datestyle.upper() not in valid_datestyles:
+                    safe_datestyle = datestyle.upper()
+                    if safe_datestyle not in valid_datestyles:
                         raise ImportError(
                             f"Invalid datestyle '{datestyle}', "
                             f"must be one of {valid_datestyles}"
                         )
-                    cur.execute(f"SET datestyle = 'ISO, {datestyle}'")
-                    logger.debug(f"Set datestyle to 'ISO, {datestyle}'")
+                    cur.execute(f"SET datestyle = 'ISO, {safe_datestyle}'")
+                    logger.debug(f"Set datestyle to 'ISO, {safe_datestyle}'")
 
                 # Stream chunks to staging table
                 total_rows = 0
@@ -527,7 +528,7 @@ def import_dbf(
         rebuild_table: If True, TRUNCATE table before import
         schema: Database schema name (default: "public")
         chunk_size: Rows per chunk for COPY (default: from env or 10000)
-        encoding: DBF encoding (default: None = GDAL auto-detect from header)
+        encoding: DBF encoding (e.g., "cp850", "latin-1"). Passed to pyogrio/GDAL.
         datestyle: PostgreSQL datestyle for date parsing
         database_url: Database connection URL
 
@@ -565,50 +566,48 @@ def import_dbf(
     if encoding:
         read_kwargs["encoding"] = encoding
 
-    # Get file info and column names
+    # Get file info for logging
     info = pyogrio.read_info(file_path)
-    total_rows = info["features"]
+    total_rows = info.get("features") or 0
 
-    # Read one row to discover column names
-    sample = pyogrio.read_dataframe(file_path, max_features=1, **read_kwargs)
-    raw_columns = sample.columns.tolist()
+    # Read full DBF file at once (C-level, fast)
+    # Then chunk with DataFrame.iloc for COPY operations
+    df = pyogrio.read_dataframe(file_path, **read_kwargs)
+
+    if len(df) == 0:
+        logger.info(f"DBF file is empty: {file_path}")
+        return ImportResult(file_path=file_path, table_name=table_name)
+
+    raw_columns = df.columns.tolist()
 
     # Sanitize column names for database compatibility
     sanitized = [sanitize_column_name(c) for c in raw_columns]
     sanitized = deduplicate_columns(sanitized)
 
-    # Compute final columns after mapping
+    # Column mapping uses raw DBF names (e.g., {"Customer Nr.": "customer_id"})
+    # to match import_csv behavior where mapping keys are original CSV headers
     if column_mapping:
-        final_columns = [column_mapping.get(col, col) for col in sanitized]
+        final_columns = [
+            column_mapping.get(raw, sanitized[i])
+            for i, raw in enumerate(raw_columns)
+        ]
     else:
         final_columns = sanitized
 
-    logger.info(f"DBF file has {total_rows:,} rows, {len(raw_columns)} columns")
+    logger.info(f"Read {len(df):,} rows, {len(raw_columns)} columns from DBF")
 
-    # Generator that reads DBF in chunks
-    def _dbf_chunk_generator():
-        offset = 0
-        chunk_num = 0
-        while offset < total_rows:
-            chunk = pyogrio.read_dataframe(
-                file_path,
-                skip_features=offset,
-                max_features=chunk_size,
-                **read_kwargs,
-            )
-            if len(chunk) == 0:
-                break
-            chunk.columns = sanitized
-            # Match CSV pipeline: all VARCHAR, empty string for NULLs
-            chunk = chunk.fillna("").astype(str)
-            chunk_num += 1
-            offset += len(chunk)
-            if chunk_num % 10 == 0:
-                logger.info(f"Reading DBF: {offset:,}/{total_rows:,} rows")
-            yield chunk
+    # Rename columns to sanitized names
+    df.columns = sanitized
+    # Match CSV pipeline: all VARCHAR, empty string for NULLs
+    df = df.fillna("").astype(str)
+
+    # Generator that yields DataFrame chunks via iloc (zero-copy slicing)
+    def _chunk_generator():
+        for start in range(0, len(df), chunk_size):
+            yield df.iloc[start:start + chunk_size]
 
     return _import_chunks(
-        chunks=_dbf_chunk_generator(),
+        chunks=_chunk_generator(),
         table_name=table_name,
         primary_key=pk_list,
         final_columns=final_columns,

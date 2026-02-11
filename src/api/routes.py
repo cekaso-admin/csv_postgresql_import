@@ -473,7 +473,7 @@ def _import_file(file_path: str, table_config, database_url: str):
             column_mapping=table_config.column_mapping,
             rebuild_table=table_config.rebuild_table,
             schema=table_config.db_schema,
-            encoding=table_config.encoding if table_config.encoding != "utf-8" else None,
+            encoding=table_config.encoding,
             datestyle=table_config.datestyle,
             database_url=database_url,
         )
