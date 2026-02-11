@@ -5,7 +5,7 @@ psycopg2-binary>=2.9.0     # PostgreSQL adapter
 pandas>=2.0.0              # DataFrame operations
 
 # DBF Processing
-# pyogrio>=0.7.0           # Optional: for DBF import (requires GDAL)
+pyogrio>=0.10.0,<1.0       # DBF import (wheels bundle GDAL)
 
 # API (for n8n integration)
 fastapi>=0.100.0           # API framework

@@ -99,7 +99,7 @@ All endpoints except `/health` require the `X-API-Key` header.
 
 ## DBF Import
 
-DBF files are imported directly via pyogrio (GDAL). No hook or CSV conversion needed — the import loop auto-detects `.dbf` files by extension. pyogrio requires GDAL (`brew install gdal` / `apt install gdal-bin libgdal-dev`). Key files: `src/db/importer.py` (`import_dbf()`), `src/utils/columns.py` (column sanitization).
+DBF files are imported directly via pyogrio (GDAL). No hook or CSV conversion needed — the import loop auto-detects `.dbf` files by extension. In Docker, pyogrio's PyPI wheels bundle GDAL — no system packages needed. For local macOS development, install GDAL via `brew install gdal`. Key files: `src/db/importer.py` (`import_dbf()`), `src/utils/columns.py` (column sanitization).
 
 ## Code Style
 
