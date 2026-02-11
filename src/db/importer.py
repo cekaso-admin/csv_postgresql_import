@@ -545,6 +545,7 @@ def import_dbf(
             "apt install gdal-bin libgdal-dev && pip install pyogrio"
         )
 
+    from pyogrio.raw import read as pyogrio_raw_read
     import pyogrio
 
     if not Path(file_path).exists():
@@ -570,9 +571,11 @@ def import_dbf(
     info = pyogrio.read_info(file_path)
     total_rows = info.get("features") or 0
 
-    # Read full DBF file at once (C-level, fast)
-    # Then chunk with DataFrame.iloc for COPY operations
-    df = pyogrio.read_dataframe(file_path, **read_kwargs)
+    # Read full DBF file at once (C-level, fast) using raw API
+    # pyogrio.raw.read avoids the geopandas dependency of read_dataframe
+    meta, _geometry, field_data = pyogrio_raw_read(file_path, **read_kwargs)
+    columns = meta["fields"].tolist()
+    df = pd.DataFrame(dict(zip(columns, field_data)))
 
     if len(df) == 0:
         logger.info(f"DBF file is empty: {file_path}")

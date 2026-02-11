@@ -25,15 +25,26 @@ _MOD = "src.db.importer"
 def _install_mock_pyogrio(**overrides) -> MagicMock:
     """Insert a mock pyogrio module into sys.modules.
 
-    Returns the mock so callers can configure read_info / read_dataframe.
+    Returns the mock so callers can configure read_info / raw.read.
     The caller is responsible for removing it afterwards (use try/finally
     or a context manager).
     """
     mock_pyogrio = MagicMock()
     for key, value in overrides.items():
         setattr(mock_pyogrio, key, value)
+    # Register both pyogrio and pyogrio.raw so
+    # "from pyogrio.raw import read" works with the mock
+    mock_raw = MagicMock()
+    mock_pyogrio.raw = mock_raw
     sys.modules["pyogrio"] = mock_pyogrio
+    sys.modules["pyogrio.raw"] = mock_raw
     return mock_pyogrio
+
+
+def _uninstall_mock_pyogrio():
+    """Remove mock pyogrio modules from sys.modules."""
+    sys.modules.pop("pyogrio", None)
+    sys.modules.pop("pyogrio.raw", None)
 
 
 # =============================================================================
@@ -81,7 +92,7 @@ class TestImportDbfFileNotFound:
                         database_url="postgresql://localhost/test",
                     )
         finally:
-            sys.modules.pop("pyogrio", None)
+            _uninstall_mock_pyogrio()
 
 
 # =============================================================================
@@ -110,7 +121,7 @@ class TestImportDbfNoPrimaryKey:
                         database_url="postgresql://localhost/test",
                     )
         finally:
-            sys.modules.pop("pyogrio", None)
+            _uninstall_mock_pyogrio()
 
 
 # =============================================================================
@@ -126,16 +137,14 @@ class TestImportDbfColumnSanitization:
         dbf_file = tmp_path / "data.dbf"
         dbf_file.write_bytes(b"\x00")
 
-        sample_df = pd.DataFrame({
-            "Customer Nr.": ["1"],
-            "Order-ID": ["100"],
-            "123value": ["abc"],
-        })
+        columns = ["Customer Nr.", "Order-ID", "123value"]
+        field_data = [np.array(["1"]), np.array(["100"]), np.array(["abc"])]
+        raw_meta = {"fields": np.array(columns)}
 
         mock_pyogrio = _install_mock_pyogrio()
         mock_pyogrio.read_info.return_value = {"features": 1}
-        # Full-file read returns the complete DataFrame
-        mock_pyogrio.read_dataframe.return_value = sample_df
+        # raw.read returns (meta, geometry, field_data)
+        mock_pyogrio.raw.read.return_value = (raw_meta, None, field_data)
 
         try:
             with patch(f"{_MOD}._check_pyogrio_available", return_value=True), \
@@ -167,7 +176,7 @@ class TestImportDbfColumnSanitization:
                 assert "Order_ID" in final_columns
                 assert "_123value" in final_columns
         finally:
-            sys.modules.pop("pyogrio", None)
+            _uninstall_mock_pyogrio()
 
 
 # =============================================================================
@@ -183,16 +192,14 @@ class TestImportDbfNullHandling:
         dbf_file = tmp_path / "data.dbf"
         dbf_file.write_bytes(b"\x00")
 
-        # Full DataFrame with NaN values
-        data_df = pd.DataFrame({
-            "id": ["1", "2"],
-            "name": ["Alice", np.nan],
-        })
+        columns = ["id", "name"]
+        field_data = [np.array(["1", "2"]), np.array(["Alice", np.nan], dtype=object)]
+        raw_meta = {"fields": np.array(columns)}
 
         mock_pyogrio = _install_mock_pyogrio()
         mock_pyogrio.read_info.return_value = {"features": 2}
-        # Full-file read returns the complete DataFrame
-        mock_pyogrio.read_dataframe.return_value = data_df
+        # raw.read returns (meta, geometry, field_data)
+        mock_pyogrio.raw.read.return_value = (raw_meta, None, field_data)
 
         captured_chunks = []
 
@@ -214,7 +221,7 @@ class TestImportDbfNullHandling:
                     database_url="postgresql://localhost/test",
                 )
         finally:
-            sys.modules.pop("pyogrio", None)
+            _uninstall_mock_pyogrio()
 
         assert len(captured_chunks) == 1, "Expected exactly one data chunk"
         chunk = captured_chunks[0]
