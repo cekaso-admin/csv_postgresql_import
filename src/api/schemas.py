@@ -160,7 +160,7 @@ class DefaultsSchema(BaseModel):
     companion_extensions: Optional[List[str]] = None
     primary_key: Union[str, List[str]] = "id"
     delimiter: str = ","
-    encoding: str = "utf-8"
+    encoding: str = "auto"
     skiprows: int = 0
     rebuild_table: bool = False
     datestyle: Optional[str] = None
@@ -178,7 +178,7 @@ class TableConfigSchema(BaseModel):
     column_mapping: Optional[Dict[str, str]] = None
     rebuild_table: bool = False
     delimiter: str = ","
-    encoding: str = "utf-8"
+    encoding: str = "auto"
     skiprows: int = 0
     datestyle: Optional[str] = None
     db_schema: Optional[str] = Field(None, alias="schema")

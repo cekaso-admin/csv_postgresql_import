@@ -6,6 +6,7 @@ pandas>=2.0.0              # DataFrame operations
 
 # DBF Processing
 pyogrio>=0.10.0,<1.0       # DBF import (wheels bundle GDAL)
+charset-normalizer>=3.0.0   # CSV encoding auto-detection
 
 # API (for n8n integration)
 fastapi>=0.100.0           # API framework

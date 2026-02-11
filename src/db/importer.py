@@ -393,7 +393,7 @@ def import_csv(
     schema: str = "public",
     chunk_size: Optional[int] = None,
     delimiter: str = ",",
-    encoding: str = "utf-8",
+    encoding: str = "auto",
     skiprows: int = 0,
     datestyle: Optional[str] = None,
     database_url: Optional[str] = None
@@ -420,7 +420,8 @@ def import_csv(
         schema: Database schema name (default: "public")
         chunk_size: Rows per chunk for streaming (default: from env or 10000)
         delimiter: CSV column separator (default: ",")
-        encoding: CSV file encoding (default: "utf-8", use "latin-1" for Windows)
+        encoding: CSV file encoding. Use "auto" for auto-detection (default),
+                 or specify explicitly (e.g., "utf-8", "latin-1").
         skiprows: Number of rows to skip before header (default: 0)
         datestyle: PostgreSQL datestyle for parsing dates (default: None = use DB default).
                   Use "DMY" for European dates (DD.MM.YYYY), "MDY" for US dates (MM/DD/YYYY).
@@ -468,6 +469,12 @@ def import_csv(
         f"Starting CSV import: {file_path} ({file_size_mb:.2f}MB) -> {table_name}"
     )
 
+    # Resolve "auto" encoding
+    if encoding == "auto":
+        from src.utils.encoding import detect_csv_encoding
+        encoding = detect_csv_encoding(file_path)
+        logger.info(f"Auto-detected CSV encoding: {encoding}")
+
     # Get CSV columns
     csv_columns = _get_csv_columns(file_path, delimiter, encoding, skiprows)
 
@@ -509,7 +516,7 @@ def import_dbf(
     rebuild_table: bool = False,
     schema: str = "public",
     chunk_size: Optional[int] = None,
-    encoding: Optional[str] = None,
+    encoding: str = "auto",
     datestyle: Optional[str] = None,
     database_url: Optional[str] = None,
 ) -> ImportResult:
@@ -528,7 +535,8 @@ def import_dbf(
         rebuild_table: If True, TRUNCATE table before import
         schema: Database schema name (default: "public")
         chunk_size: Rows per chunk for COPY (default: from env or 10000)
-        encoding: DBF encoding (e.g., "cp850", "latin-1"). Passed to pyogrio/GDAL.
+        encoding: DBF encoding. Use "auto" to let GDAL auto-detect from the
+                 DBF code page header (default), or specify explicitly (e.g., "cp850").
         datestyle: PostgreSQL datestyle for date parsing
         database_url: Database connection URL
 
@@ -564,24 +572,22 @@ def import_dbf(
 
     # Build pyogrio read kwargs
     read_kwargs = {"read_geometry": False}
-    if encoding:
+    if encoding and encoding != "auto":
         read_kwargs["encoding"] = encoding
 
-    # Get file info for logging
+    # Get file info for total row count and column names
     info = pyogrio.read_info(file_path)
     total_rows = info.get("features") or 0
 
-    # Read full DBF file at once (C-level, fast) using raw API
-    # pyogrio.raw.read avoids the geopandas dependency of read_dataframe
-    meta, _geometry, field_data = pyogrio_raw_read(file_path, **read_kwargs)
-    columns = meta["fields"].tolist()
-    df = pd.DataFrame(dict(zip(columns, field_data)))
-
-    if len(df) == 0:
+    if total_rows == 0:
         logger.info(f"DBF file is empty: {file_path}")
         return ImportResult(file_path=file_path, table_name=table_name)
 
-    raw_columns = df.columns.tolist()
+    # Read a single row to get column names without loading the full file
+    meta, _geometry, _field_data = pyogrio_raw_read(
+        file_path, max_features=1, **read_kwargs
+    )
+    raw_columns = meta["fields"].tolist()
 
     # Sanitize column names for database compatibility
     sanitized = [sanitize_column_name(c) for c in raw_columns]
@@ -597,17 +603,23 @@ def import_dbf(
     else:
         final_columns = sanitized
 
-    logger.info(f"Read {len(df):,} rows, {len(raw_columns)} columns from DBF")
+    logger.info(f"DBF has {total_rows:,} rows, {len(raw_columns)} columns — streaming in chunks of {chunk_size:,}")
 
-    # Rename columns to sanitized names
-    df.columns = sanitized
-    # Match CSV pipeline: all VARCHAR, empty string for NULLs
-    df = df.fillna("").astype(str)
-
-    # Generator that yields DataFrame chunks via iloc (zero-copy slicing)
+    # Generator that reads DBF in chunks via skip_features/max_features
+    # so only chunk_size rows are in memory at a time
     def _chunk_generator():
-        for start in range(0, len(df), chunk_size):
-            yield df.iloc[start:start + chunk_size]
+        for offset in range(0, total_rows, chunk_size):
+            meta, _geom, field_data = pyogrio_raw_read(
+                file_path,
+                skip_features=offset,
+                max_features=chunk_size,
+                **read_kwargs,
+            )
+            cols = meta["fields"].tolist()
+            chunk = pd.DataFrame(dict(zip(cols, field_data)))
+            chunk.columns = sanitized
+            chunk = chunk.fillna("").astype(str)
+            yield chunk
 
     return _import_chunks(
         chunks=_chunk_generator(),

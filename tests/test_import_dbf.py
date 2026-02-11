@@ -239,6 +239,93 @@ class TestImportDbfNullHandling:
 # =============================================================================
 
 
+# =============================================================================
+# Auto encoding for DBF
+# =============================================================================
+
+
+class TestImportDbfAutoEncoding:
+    """Verify that encoding="auto" does not pass encoding to pyogrio."""
+
+    def test_auto_encoding_omits_kwarg(self, tmp_path):
+        """When encoding='auto', pyogrio.raw.read must be called WITHOUT encoding in kwargs."""
+        dbf_file = tmp_path / "data.dbf"
+        dbf_file.write_bytes(b"\x00")
+
+        columns = ["id", "name"]
+        field_data = [np.array(["1"]), np.array(["Alice"])]
+        raw_meta = {"fields": np.array(columns)}
+
+        mock_pyogrio = _install_mock_pyogrio()
+        mock_pyogrio.read_info.return_value = {"features": 1}
+        mock_pyogrio.raw.read.return_value = (raw_meta, None, field_data)
+
+        try:
+            with patch(f"{_MOD}._check_pyogrio_available", return_value=True), \
+                 patch(f"{_MOD}._PYOGRIO_AVAILABLE", True), \
+                 patch(f"{_MOD}._get_file_size_mb", return_value=0.01), \
+                 patch(f"{_MOD}._import_chunks") as mock_import_chunks:
+
+                mock_import_chunks.return_value = MagicMock(
+                    inserted=1, updated=0, skipped=0, errors=[]
+                )
+
+                import_dbf(
+                    file_path=str(dbf_file),
+                    table_name="test_table",
+                    primary_key="id",
+                    encoding="auto",
+                    database_url="postgresql://localhost/test",
+                )
+
+                # Verify pyogrio.raw.read was called without encoding kwarg
+                call_args = mock_pyogrio.raw.read.call_args
+                assert "encoding" not in call_args.kwargs, (
+                    f"Expected no 'encoding' kwarg when encoding='auto', "
+                    f"but got: {call_args.kwargs}"
+                )
+        finally:
+            _uninstall_mock_pyogrio()
+
+    def test_explicit_encoding_passes_kwarg(self, tmp_path):
+        """When encoding is explicit (e.g. 'cp850'), it must be passed to pyogrio."""
+        dbf_file = tmp_path / "data.dbf"
+        dbf_file.write_bytes(b"\x00")
+
+        columns = ["id", "name"]
+        field_data = [np.array(["1"]), np.array(["Alice"])]
+        raw_meta = {"fields": np.array(columns)}
+
+        mock_pyogrio = _install_mock_pyogrio()
+        mock_pyogrio.read_info.return_value = {"features": 1}
+        mock_pyogrio.raw.read.return_value = (raw_meta, None, field_data)
+
+        try:
+            with patch(f"{_MOD}._check_pyogrio_available", return_value=True), \
+                 patch(f"{_MOD}._PYOGRIO_AVAILABLE", True), \
+                 patch(f"{_MOD}._get_file_size_mb", return_value=0.01), \
+                 patch(f"{_MOD}._import_chunks") as mock_import_chunks:
+
+                mock_import_chunks.return_value = MagicMock(
+                    inserted=1, updated=0, skipped=0, errors=[]
+                )
+
+                import_dbf(
+                    file_path=str(dbf_file),
+                    table_name="test_table",
+                    primary_key="id",
+                    encoding="cp850",
+                    database_url="postgresql://localhost/test",
+                )
+
+                call_args = mock_pyogrio.raw.read.call_args
+                assert call_args.kwargs.get("encoding") == "cp850", (
+                    f"Expected encoding='cp850' in kwargs, got: {call_args.kwargs}"
+                )
+        finally:
+            _uninstall_mock_pyogrio()
+
+
 class TestImportFileDispatch:
     """Verify _import_file routes to the correct importer based on extension."""
 

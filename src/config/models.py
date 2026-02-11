@@ -189,7 +189,7 @@ class DefaultsConfig(BaseModel):
     companion_extensions: Optional[List[str]] = None
     primary_key: Union[str, List[str]]
     delimiter: str = ","
-    encoding: str = "utf-8"
+    encoding: str = "auto"
     skiprows: int = 0
     rebuild_table: bool = False
     datestyle: Optional[str] = None
@@ -246,7 +246,7 @@ class TableConfig(BaseModel):
     column_mapping: Optional[Dict[str, str]] = None
     rebuild_table: bool = False
     delimiter: str = ","
-    encoding: str = "utf-8"
+    encoding: str = "auto"
     skiprows: int = 0
     datestyle: Optional[str] = None
     db_schema: str = Field(default="public", alias="schema")
