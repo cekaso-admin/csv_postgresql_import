@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Summary
 
-Python script for importing CSV files into PostgreSQL (Supabase). Creates tables if they don't exist, upserts rows if they do. Will expose an API for n8n workflow orchestration.
+Python script for importing CSV and DBF files into PostgreSQL (Supabase). Creates tables if they don't exist, upserts rows if they do. Exposes a FastAPI for n8n workflow orchestration.
 
 ## Tech Stack
 
@@ -21,10 +21,11 @@ csv_postgresql_import/
 │   ├── db/                # Database operations
 │   │   ├── connection.py  # Connection pool management
 │   │   ├── schema.py      # Table operations (create, staging)
-│   │   └── importer.py    # Core CSV import logic
+│   │   └── importer.py    # Core CSV/DBF import logic
 │   ├── config/            # YAML config loading (Phase 2)
 │   ├── sftp/              # SFTP client (Phase 3)
 │   ├── api/               # FastAPI routes (Phase 5)
+│   ├── utils/             # Shared utilities (column sanitization)
 │   └── services/          # Job orchestration (Phase 4)
 ├── config/                # Project YAML configs
 ├── context/               # Documentation for LLMs
@@ -95,6 +96,10 @@ All endpoints except `/health` require the `X-API-Key` header.
 | `/import` | POST | Start import job |
 | `/jobs` | GET | List recent jobs |
 | `/jobs/{job_id}` | GET | Get job status/results |
+
+## DBF Import
+
+DBF files are imported directly via pyogrio (GDAL). No hook or CSV conversion needed — the import loop auto-detects `.dbf` files by extension. pyogrio requires GDAL (`brew install gdal` / `apt install gdal-bin libgdal-dev`). Key files: `src/db/importer.py` (`import_dbf()`), `src/utils/columns.py` (column sanitization).
 
 ## Code Style
 
