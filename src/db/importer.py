@@ -584,7 +584,7 @@ def import_dbf(
         return ImportResult(file_path=file_path, table_name=table_name)
 
     # Read a single row to get column names without loading the full file
-    meta, _geometry, _field_data = pyogrio_raw_read(
+    meta, _fids, _geometry, _field_data = pyogrio_raw_read(
         file_path, max_features=1, **read_kwargs
     )
     raw_columns = meta["fields"].tolist()
@@ -609,7 +609,7 @@ def import_dbf(
     # so only chunk_size rows are in memory at a time
     def _chunk_generator():
         for offset in range(0, total_rows, chunk_size):
-            meta, _geom, field_data = pyogrio_raw_read(
+            meta, _fids, _geom, field_data = pyogrio_raw_read(
                 file_path,
                 skip_features=offset,
                 max_features=chunk_size,
