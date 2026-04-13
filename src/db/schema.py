@@ -548,14 +548,31 @@ def refresh_materialized_views(
                 try:
                     with conn.cursor() as cur:
                         # Use standard REFRESH (not CONCURRENTLY) for reliability
+                        view_identifier = sql.Identifier(schema, view_name)
                         query = sql.SQL("REFRESH MATERIALIZED VIEW {view}").format(
-                            view=sql.Identifier(schema, view_name)
+                            view=view_identifier
                         )
                         cur.execute(query)
                         conn.commit()
 
                         result.views_refreshed.append(view_name)
                         logger.info(f"Refreshed materialized view: {view_name}")
+
+                        # Refresh planner statistics. ANALYZE failure is non-fatal:
+                        # the data is already fresh, only stats are stale.
+                        try:
+                            analyze_query = sql.SQL("ANALYZE {view}").format(
+                                view=view_identifier
+                            )
+                            cur.execute(analyze_query)
+                            conn.commit()
+                            logger.info(f"Analyzed materialized view: {view_name}")
+                        except psycopg2.Error as analyze_error:
+                            conn.rollback()
+                            logger.warning(
+                                f"Failed to analyze view '{view_name}' after refresh: "
+                                f"{analyze_error}"
+                            )
 
                 except psycopg2.Error as e:
                     conn.rollback()
